@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "name": "nemotron_asr",
+  "version": "0.1.0",
+  "api_version": ">= 0.3.0",
+  "depends": [],
+  "platforms": ["linux"],
+  "entry": "nemotron_asr_register",
+  "registration_target": "gufo_nemotron_asr",
+  "targets": {
+    "gufo_nemotron_asr": { "requires": [] },
+    "gufo_nemotron_asr_hip": { "requires": ["hip"] },
+    "gufo_nemotron_asr_runner": { "requires": ["hip"] },
+    "nemotron_asr_host_test": { "requires": ["testing"], "role": "test" },
+    "nemotron_asr_features_test": { "requires": ["testing"], "role": "test" },
+    "nemotron_asr_tokenizer_test": { "requires": ["testing"], "role": "test" },
+    "nemotron_asr_model_test": { "requires": ["hip", "testing"], "role": "test" },
+    "nemotron_asr_transcribe": { "requires": ["hip", "testing"], "role": "test" }
+  },
+  "providers": [
+    {
+      "id": "nemotron-asr",
+      "capability": "speech_recognition",
+      "keys": ["safetensors:nemotron3_5_asr", "safetensors:Nemotron3_5AsrForRNNT"],
+      "model_ids": ["nemotron-3.5-asr-streaming-0.6b"],
+      "target": "gufo_nemotron_asr_runner",
+      "entry": "nemotron_asr_provider_register"
+    }
+  ],
+  "licenses": [
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "licenses/gufo.txt",
+    "licenses/transformers.txt",
+    "licenses/NeMo.txt",
+    "licenses/librosa.txt"
+  ]
+}

@@ -1,0 +1,254 @@
+{
+ "server": "audiocpp",
+ "lookahead": 13,
+ "power_profile_before": "balanced",
+ "model": "Nemotron-3.5-ASR-Streaming-0.6B",
+ "clips": {
+  "english": {
+   "audio_seconds": 10.08,
+   "language": "en-US",
+   "request_seconds": 0.1559,
+   "runs": [
+    0.15591588499955833,
+    0.1545384409982944,
+    0.1574026660018717
+   ],
+   "rtf": 0.0155,
+   "audio_seconds_per_second": 64.6502,
+   "text": "The quick brown fox jumps over the lazy dog.  Speech recognition turns spoken words into written text one sentence at a time. ",
+   "repeatable": true,
+   "wer": 0.0,
+   "machine": {
+    "watts": {
+     "median": 48.344,
+     "max": 48.344
+    },
+    "gpu_c": {
+     "median": 59.0,
+     "max": 59.0
+    },
+    "cpu_c": {
+     "median": 61.75,
+     "max": 61.75
+    },
+    "sclk_mhz": {
+     "median": 2084.0,
+     "max": 2084.0
+    },
+    "gpu_busy": {
+     "median": 42.0,
+     "max": 42.0
+    }
+   },
+   "server_timing": {
+    "wall_ms": 155.098,
+    "audio_duration_ms": 10080,
+    "rtf": 0.0154
+   }
+  },
+  "german": {
+   "audio_seconds": 6.08,
+   "language": "de-DE",
+   "request_seconds": 0.1245,
+   "runs": [
+    0.12221369899998535,
+    0.1244876140008273,
+    0.12471143699804088
+   ],
+   "rtf": 0.0205,
+   "audio_seconds_per_second": 48.8402,
+   "text": "Heute ist ein schöner Tag in Berlin.  Wir prüfen die Spracherkennung mit zwei kurzen Sätzen auf Deutsch. ",
+   "repeatable": true,
+   "wer": 0.0,
+   "machine": {
+    "watts": {
+     "median": 55.065,
+     "max": 55.065
+    },
+    "gpu_c": {
+     "median": 59.0,
+     "max": 59.0
+    },
+    "cpu_c": {
+     "median": 61.25,
+     "max": 61.25
+    },
+    "sclk_mhz": {
+     "median": 2379.0,
+     "max": 2379.0
+    },
+    "gpu_busy": {
+     "median": 54.0,
+     "max": 54.0
+    }
+   },
+   "server_timing": {
+    "wall_ms": 121.699,
+    "audio_duration_ms": 6080,
+    "rtf": 0.02
+   }
+  },
+  "reference": {
+   "audio_seconds": 10.0,
+   "language": "en-US",
+   "request_seconds": 0.139,
+   "runs": [
+    0.13435771799777285,
+    0.13896611500240397,
+    0.13948094799707178
+   ],
+   "rtf": 0.0139,
+   "audio_seconds_per_second": 71.96,
+   "text": "It is said with truth that every building is constructed stone by stone, and the same may be said of knowledge",
+   "repeatable": true,
+   "wer": 0.0455,
+   "machine": {
+    "watts": {
+     "median": 59.731,
+     "max": 59.731
+    },
+    "gpu_c": {
+     "median": 58.0,
+     "max": 58.0
+    },
+    "cpu_c": {
+     "median": 60.875,
+     "max": 60.875
+    },
+    "sclk_mhz": {
+     "median": 2562.0,
+     "max": 2562.0
+    },
+    "gpu_busy": {
+     "median": 62.0,
+     "max": 62.0
+    }
+   },
+   "server_timing": {
+    "wall_ms": 133.529,
+    "audio_duration_ms": 10000,
+    "rtf": 0.0134
+   }
+  }
+ },
+ "machine_before": {
+  "t": 1794575576.9189,
+  "watts": 72.068,
+  "gpu_c": 54.0,
+  "cpu_c": 65.125,
+  "sclk_mhz": 2083.0,
+  "gpu_busy": 49.0
+ },
+ "ready_seconds": 2.6805,
+ "command": [
+  "audiocpp_server",
+  "--config",
+  "audiocpp_server.json"
+ ],
+ "first_request": {
+  "clip": "english",
+  "seconds": 0.1816,
+  "text": "The quick brown fox jumps over the lazy dog.  Speech recognition turns spoken words into written text one sentence at a time. "
+ },
+ "resident_bytes": 139866112,
+ "gpu_bytes": 5314523136,
+ "long": {
+  "audio_seconds": 308.72,
+  "request_seconds": 4.5118,
+  "rtf": 0.0146,
+  "wer": 0.1192,
+  "words": 663,
+  "machine": {
+   "watts": {
+    "median": 71.648,
+    "max": 89.987
+   },
+   "gpu_c": {
+    "median": 59.0,
+    "max": 66.0
+   },
+   "cpu_c": {
+    "median": 63.5,
+    "max": 64.625
+   },
+   "sclk_mhz": {
+    "median": 2769.0,
+    "max": 2882.0
+   },
+   "gpu_busy": {
+    "median": 70.0,
+    "max": 92.0
+   }
+  }
+ },
+ "concurrent": {
+  "clip": "english",
+  "1": {
+   "latency_median": 0.1697,
+   "latency_p95": 0.1806,
+   "audio_seconds_per_second": 59.2339,
+   "text_mismatches": 0
+  },
+  "2": {
+   "latency_median": 0.2261,
+   "latency_p95": 0.3171,
+   "audio_seconds_per_second": 65.5275,
+   "text_mismatches": 0
+  },
+  "4": {
+   "latency_median": 0.3882,
+   "latency_p95": 0.626,
+   "audio_seconds_per_second": 65.3301,
+   "text_mismatches": 0
+  }
+ },
+ "stream": {
+  "english": {
+   "first_text_seconds": 0.0516,
+   "complete_seconds": 0.6816,
+   "deltas": 9,
+   "text": "The quick brown fox jumps over the lazy dog.  Speech recognition turns spoken words into written text one sentence at a time",
+   "deltas_equal_text": true,
+   "wer": 0.0
+  },
+  "german": {
+   "first_text_seconds": 0.0692,
+   "complete_seconds": 0.4548,
+   "deltas": 6,
+   "text": "Heute ist ein schöner Tag in Berlin.  Wir prüfen die Spracherkennung mit zwei kurzen Sätzen auf Deutsch",
+   "deltas_equal_text": true,
+   "wer": 0.0
+  },
+  "reference": {
+   "first_text_seconds": 0.1088,
+   "complete_seconds": 0.5844,
+   "deltas": 8,
+   "text": "It is said with truth that every building is constructed stone by stone, and the same may be said of knowledge",
+   "deltas_equal_text": true,
+   "wer": 0.0455
+  }
+ },
+ "machine": {
+  "watts": {
+   "median": 66.4615,
+   "max": 89.987
+  },
+  "gpu_c": {
+   "median": 58.0,
+   "max": 66.0
+  },
+  "cpu_c": {
+   "median": 62.4375,
+   "max": 65.625
+  },
+  "sclk_mhz": {
+   "median": 2517.5,
+   "max": 2882.0
+  },
+  "gpu_busy": {
+   "median": 65.5,
+   "max": 92.0
+  }
+ },
+ "power_profile_after": "balanced"
+}

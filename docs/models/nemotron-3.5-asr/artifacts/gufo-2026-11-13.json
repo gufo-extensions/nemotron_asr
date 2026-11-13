@@ -1,0 +1,184 @@
+{
+ "server": "gufo",
+ "lookahead": 13,
+ "power_profile_before": "balanced",
+ "model": "Nemotron-3.5-ASR-Streaming-0.6B",
+ "clips": {
+  "english": {
+   "audio_seconds": 10.08,
+   "language": "en-US",
+   "request_seconds": 0.0272,
+   "runs": [
+    0.02717027899780078,
+    0.02732684500006144,
+    0.026240719998895656
+   ],
+   "rtf": 0.0027,
+   "audio_seconds_per_second": 370.9936,
+   "text": "The quick brown fox jumps over the lazy dog. Speech recognition turns spoken words into written text one sentence at a time.",
+   "repeatable": true,
+   "wer": 0.0,
+   "machine": {}
+  },
+  "german": {
+   "audio_seconds": 6.08,
+   "language": "de-DE",
+   "request_seconds": 0.0218,
+   "runs": [
+    0.02099041800101986,
+    0.022101082999142818,
+    0.021751893000327982
+   ],
+   "rtf": 0.0036,
+   "audio_seconds_per_second": 279.5159,
+   "text": "Heute ist ein schöner Tag in Berlin. Wir prüfen die Spracherkennung mit zwei kurzen Sätzen auf Deutsch.",
+   "repeatable": true,
+   "wer": 0.0,
+   "machine": {}
+  },
+  "reference": {
+   "audio_seconds": 10.0,
+   "language": "en-US",
+   "request_seconds": 0.0245,
+   "runs": [
+    0.02430306099995505,
+    0.02450553499875241,
+    0.025133104998531053
+   ],
+   "rtf": 0.0025,
+   "audio_seconds_per_second": 408.0711,
+   "text": "It is said with truth that every building is constructed stone by stone, and the same may be said of knowledge",
+   "repeatable": true,
+   "wer": 0.0455,
+   "machine": {}
+  }
+ },
+ "machine_before": {
+  "t": 1794580599.5591,
+  "watts": 17.443,
+  "gpu_c": 54.0,
+  "cpu_c": 63.125,
+  "sclk_mhz": 695.0,
+  "gpu_busy": 3.0
+ },
+ "ready_seconds": 1.0645,
+ "command": [
+  "gufo",
+  "serve",
+  "asr",
+  "--model",
+  "Nemotron-3.5-ASR-Streaming-0.6B",
+  "--host",
+  "127.0.0.1",
+  "--port",
+  "18741",
+  "--max-request-bytes",
+  "67108864"
+ ],
+ "first_request": {
+  "clip": "english",
+  "seconds": 0.0388,
+  "text": "The quick brown fox jumps over the lazy dog. Speech recognition turns spoken words into written text one sentence at a time."
+ },
+ "resident_bytes": 251420672,
+ "gpu_bytes": 1561853952,
+ "long": {
+  "audio_seconds": 308.72,
+  "request_seconds": 0.64,
+  "rtf": 0.0021,
+  "wer": 0.1192,
+  "words": 663,
+  "machine": {
+   "watts": {
+    "median": 72.727,
+    "max": 72.727
+   },
+   "gpu_c": {
+    "median": 69.0,
+    "max": 69.0
+   },
+   "cpu_c": {
+    "median": 74.0,
+    "max": 74.0
+   },
+   "sclk_mhz": {
+    "median": 1814.0,
+    "max": 1814.0
+   },
+   "gpu_busy": {
+    "median": 49.0,
+    "max": 49.0
+   }
+  }
+ },
+ "concurrent": {
+  "clip": "english",
+  "1": {
+   "latency_median": 0.0266,
+   "latency_p95": 0.0274,
+   "audio_seconds_per_second": 370.8669,
+   "text_mismatches": 0
+  },
+  "2": {
+   "latency_median": 0.0411,
+   "latency_p95": 0.0558,
+   "audio_seconds_per_second": 393.9051,
+   "text_mismatches": 0
+  },
+  "4": {
+   "latency_median": 0.0636,
+   "latency_p95": 0.1014,
+   "audio_seconds_per_second": 421.9529,
+   "text_mismatches": 0
+  }
+ },
+ "stream": {
+  "english": {
+   "first_text_seconds": 0.0196,
+   "complete_seconds": 0.0575,
+   "deltas": 4,
+   "text": "The quick brown fox jumps over the lazy dog. Speech recognition turns spoken words into written text one sentence at a time.",
+   "deltas_equal_text": true,
+   "wer": 0.0
+  },
+  "german": {
+   "first_text_seconds": 0.0196,
+   "complete_seconds": 0.0418,
+   "deltas": 3,
+   "text": "Heute ist ein schöner Tag in Berlin. Wir prüfen die Spracherkennung mit zwei kurzen Sätzen auf Deutsch.",
+   "deltas_equal_text": true,
+   "wer": 0.0
+  },
+  "reference": {
+   "first_text_seconds": 0.0192,
+   "complete_seconds": 0.0457,
+   "deltas": 3,
+   "text": "It is said with truth that every building is constructed stone by stone, and the same may be said of knowledge",
+   "deltas_equal_text": true,
+   "wer": 0.0455
+  }
+ },
+ "machine": {
+  "watts": {
+   "median": 51.542,
+   "max": 91.628
+  },
+  "gpu_c": {
+   "median": 64.0,
+   "max": 69.0
+  },
+  "cpu_c": {
+   "median": 70.125,
+   "max": 78.25
+  },
+  "sclk_mhz": {
+   "median": 1468.0,
+   "max": 2349.0
+  },
+  "gpu_busy": {
+   "median": 28.0,
+   "max": 73.0
+  }
+ },
+ "power_profile_after": "balanced"
+}
