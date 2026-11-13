@@ -5,27 +5,25 @@
 
 #include <cstdint>
 
-// Kernels of the encoder and the transducer: float32 activations, row-major,
-// and float16 copies (std::uint16_t storage) as operands of the matrix
-// products. The subsampling keeps [time][frequency][channel].
+// Kernels of the encoder and the transducer, row-major: float32 activations
+// with float16 copies (std::uint16_t storage) as operands of the matrix
+// products; the subsampling keeps float16 [time][frequency][channel].
 namespace gufo::models::nemotron_asr::kernels {
 
 /// The stem: a 3x3 stride-2 convolution of the single-channel mel
 /// spectrogram [rows][bins] (frequency padded by 2 before and 1 after),
-/// plus bias, then ReLU: out [out_rows][out_freq][channels].
+/// plus bias, then ReLU: out [out_rows][out_freq][channels] as float16.
 void SubsampleInput(const float* mel, int bins, const float* weight,
-                    const float* bias, int channels, float* out, int out_rows,
-                    int out_freq, hipStream_t stream);
+                    const float* bias, int channels, std::uint16_t* out,
+                    int out_rows, int out_freq, hipStream_t stream);
 
-/// A depthwise 3x3 stride-2 convolution of [rows][in_freq][channels] plus
-/// bias (frequency padded like the stem): out [out_rows][out_freq][channels].
-void SubsampleDepthwise(const float* in, int in_freq, const float* weight,
-                        const float* bias, int channels, float* out,
-                        int out_rows, int out_freq, hipStream_t stream);
-
-/// x[r][c] = x[r][c] + bias[c], then ReLU when `relu`.
-void AddBias(float* x, const float* bias, int rows, int cols, bool relu,
-             hipStream_t stream);
+/// A depthwise 3x3 stride-2 convolution of float16 [rows][in_freq][channels]
+/// plus bias (frequency padded like the stem), summed in float32: out
+/// [out_rows][out_freq][channels] as float16; channels even.
+void SubsampleDepthwise(const std::uint16_t* in, int in_freq,
+                        const float* weight, const float* bias, int channels,
+                        std::uint16_t* out, int out_rows, int out_freq,
+                        hipStream_t stream);
 
 /// y = LayerNorm(x) * weight + bias over rows of `cols` (eps 1e-5).
 void LayerNorm(const float* x, const float* weight, const float* bias, float* y,
@@ -57,12 +55,18 @@ struct AttentionShape {
   float scale = 0.0F;
 };
 
+/// Frames a query attends to at most (left context plus chunk).
+inline constexpr int kMaxKeys = 256;
+
 /// Transformer-XL attention with chunked limited context: a query attends
 /// to the keys from `left` frames before its chunk to the chunk's end, with
 /// scores ((q + u) . k + (q + v) . pos[query - key]) * scale. The pass's
 /// queries, keys and values are `qkv` rows [q | k | v] (q_stride apart),
 /// earlier keys and values the caches' rows (frames first_key to
-/// first_query - 1); the output is float16.
+/// first_query - 1). The products take float16 operands with float32 sums,
+/// the softmax is float32; the output is float16. left + chunk at most
+/// kMaxKeys; rows are read as float4: qkv, the caches and pos 16-byte
+/// aligned, q_stride a multiple of 4.
 void RelPosAttentionHalf(const float* qkv, const float* cache_keys,
                          const float* cache_values, const float* pos,
                          const float* bias_u, const float* bias_v,

@@ -68,6 +68,10 @@ struct Config {
 /// Reads both files from a model directory.
 [[nodiscard]] std::optional<Config> LoadConfig(std::string_view model_root,
                                                std::string* error = nullptr);
+/// Frames a query may attend to (left context plus chunk): the attention
+/// kernel's limit.
+inline constexpr std::size_t kMaxAttendedFrames = 256;
+
 /// Whether the kernels support these shapes.
 [[nodiscard]] bool IsSupported(const Config& config,
                                std::string* error = nullptr);

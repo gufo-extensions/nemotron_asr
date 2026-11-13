@@ -2,15 +2,15 @@
 // extension by the same author.
 #include "wmma.hpp"
 
+#include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
 #include <algorithm>
 
+#include "wmma_fragment.hpp"
+
 namespace gufo::models::nemotron_asr::kernels {
 namespace {
-
-using Fragment = _Float16 __attribute__((ext_vector_type(16)));
-using Accumulator = float __attribute__((ext_vector_type(8)));
 
 constexpr int kWaves = 4;
 constexpr std::size_t kTileHalves = 16 * 32;
@@ -18,16 +18,6 @@ constexpr std::size_t kTileHalves = 16 * 32;
 // and 224 rows took the least time, fewer waves leave SIMDs idle, more read
 // the weights more often.
 constexpr std::size_t kTargetWaves = 384;
-
-__device__ inline Fragment Load16(const void* p) {
-  union {
-    Fragment v;
-    uint4 u[2];
-  } cvt;
-  cvt.u[0] = *static_cast<const uint4*>(p);
-  cvt.u[1] = *(static_cast<const uint4*>(p) + 1);
-  return cvt.v;
-}
 
 __device__ inline Fragment FromWords(const uint4& lo, const uint4& hi) {
   union {
@@ -60,13 +50,16 @@ __global__ void HalfToTilesKernel(const std::uint16_t* weights, int rows,
 // consecutive k, replicated in both half-waves; element i of lane L's sums
 // is activation row 2i + L / 16 and weight row L % 16. Each output is one
 // wave's sum over the whole reduction in order. Activation rows beyond
-// `rows` repeat the last row; their results are dropped.
+// `rows` repeat the last row; their results are dropped. The sums are
+// scaled, added to y (`accumulate`), then get the bias and ReLU; kHalf
+// stores them as float16 (saturated), without accumulation.
 constexpr int kStride = 40;  // halves per LDS row: 32 and padding
 
-template<int kTiles>
+template<int kTiles, bool kHalf>
 __global__ __launch_bounds__(kWaves * 32) void WmmaKernel(
-    const std::uint16_t* x, const std::uint16_t* w, float* y, int rows,
-    int in, int out, bool accumulate, float scale) {
+    const std::uint16_t* x, const std::uint16_t* w, void* y, int rows,
+    int in, int out, bool accumulate, float scale, const float* bias,
+    bool relu) {
   constexpr int kRows = kTiles * 16;
   // Each thread stages kChunks pieces of 16 bytes of a block's activations
   // ([kRows][32] halves = kRows * 4 pieces).
@@ -131,10 +124,10 @@ __global__ __launch_bounds__(kWaves * 32) void WmmaKernel(
 #pragma unroll
     for (int t = 0; t < kTiles; ++t) {
       const std::uint16_t* row = &staged[buffer][(t * 16 + column) * kStride];
-      acc[t] = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(Load16(row), b0,
-                                                          acc[t]);
-      acc[t] = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(Load16(row + 16), b1,
-                                                          acc[t]);
+      acc[t] = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(LoadFragment(row),
+                                                          b0, acc[t]);
+      acc[t] = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(
+          LoadFragment(row + 16), b1, acc[t]);
     }
 #pragma unroll
     for (int c = 0; c < kChunks; ++c)
@@ -144,31 +137,83 @@ __global__ __launch_bounds__(kWaves * 32) void WmmaKernel(
   if (!active)
     return;
   const int half = lane / 16;
+  const float shift = bias != nullptr ? bias[n] : 0.0F;
 #pragma unroll
   for (int t = 0; t < kTiles; ++t) {
 #pragma unroll
     for (int i = 0; i < 8; ++i) {
       const int m = first_row + t * 16 + 2 * i + half;
       if (m < rows) {
-        float* target = y + static_cast<std::size_t>(m) * out + n;
-        *target =
-            accumulate ? fmaf(scale, acc[t][i], *target) : scale * acc[t][i];
+        const std::size_t at = static_cast<std::size_t>(m) * out + n;
+        if constexpr (kHalf) {
+          float value = scale * acc[t][i] + shift;
+          if (relu)
+            value = fmaxf(value, 0.0F);
+          static_cast<__half*>(y)[at] = SaturatedHalf(value);
+        } else {
+          float* target = static_cast<float*>(y) + at;
+          float value =
+              accumulate ? fmaf(scale, acc[t][i], *target) : scale * acc[t][i];
+          if (bias != nullptr)
+            value += shift;
+          if (relu)
+            value = fmaxf(value, 0.0F);
+          *target = value;
+        }
       }
     }
   }
 }
 
-template<int kTiles>
-void Launch(const std::uint16_t* x, const std::uint16_t* w, float* y,
+template<int kTiles, bool kHalf>
+void Launch(const std::uint16_t* x, const std::uint16_t* w, void* y,
             std::size_t rows, std::size_t in, std::size_t out,
-            bool accumulate, float scale, hipStream_t stream) {
+            bool accumulate, float scale, const float* bias, bool relu,
+            hipStream_t stream) {
   const std::size_t tiles = out / 16;
   const std::size_t groups = (rows + kTiles * 16 - 1) / (kTiles * 16);
   const dim3 grid(static_cast<unsigned>((tiles + kWaves - 1) / kWaves),
                   static_cast<unsigned>(groups));
-  WmmaKernel<kTiles><<<grid, kWaves * 32, 0, stream>>>(
+  WmmaKernel<kTiles, kHalf><<<grid, kWaves * 32, 0, stream>>>(
       x, w, y, static_cast<int>(rows), static_cast<int>(in),
-      static_cast<int>(out), accumulate, scale);
+      static_cast<int>(out), accumulate, scale, bias, relu);
+}
+
+template<bool kHalf>
+bool Dispatch(const std::uint16_t* x, const std::uint16_t* tiles, void* y,
+              std::size_t rows, std::size_t in, std::size_t out,
+              bool accumulate, float scale, const float* bias, bool relu,
+              hipStream_t stream) {
+  if (rows == 0 || in % 32 != 0 || out % 16 != 0 || out == 0 ||
+      (kHalf && accumulate))
+    return false;
+  // Activation tiles per wave: as many as keep about kTargetWaves waves
+  // busy, at most 8 (registers).
+  const std::size_t row_tiles = (rows + 15) / 16;
+  const std::size_t weight_tiles = out / 16;
+  std::size_t per_wave = std::clamp<std::size_t>(
+      (row_tiles * weight_tiles + kTargetWaves - 1) / kTargetWaves, 1, 8);
+  // Even groups: the fewest tiles per wave for the same number of groups.
+  const std::size_t groups = (row_tiles + per_wave - 1) / per_wave;
+  per_wave = (row_tiles + groups - 1) / groups;
+  switch (per_wave) {
+#define GUFO_NEMOTRON_ASR_WMMA(n)                                          \
+  case n:                                                                  \
+    Launch<n, kHalf>(x, tiles, y, rows, in, out, accumulate, scale, bias,  \
+                     relu, stream);                                        \
+    return true;
+    GUFO_NEMOTRON_ASR_WMMA(1)
+    GUFO_NEMOTRON_ASR_WMMA(2)
+    GUFO_NEMOTRON_ASR_WMMA(3)
+    GUFO_NEMOTRON_ASR_WMMA(4)
+    GUFO_NEMOTRON_ASR_WMMA(5)
+    GUFO_NEMOTRON_ASR_WMMA(6)
+    GUFO_NEMOTRON_ASR_WMMA(7)
+    GUFO_NEMOTRON_ASR_WMMA(8)
+#undef GUFO_NEMOTRON_ASR_WMMA
+    default:
+      return false;
+  }
 }
 
 }  // namespace
@@ -184,35 +229,18 @@ void HalfToTiles(const std::uint16_t* weights, std::size_t rows,
 
 bool WmmaLinear(const std::uint16_t* x, const std::uint16_t* tiles, float* y,
                 std::size_t rows, std::size_t in, std::size_t out,
-                bool accumulate, float scale, hipStream_t stream) {
-  if (rows == 0 || in % 32 != 0 || out % 16 != 0 || out == 0)
-    return false;
-  // Activation tiles per wave: as many as keep about kTargetWaves waves
-  // busy, at most 8 (registers).
-  const std::size_t row_tiles = (rows + 15) / 16;
-  const std::size_t weight_tiles = out / 16;
-  std::size_t per_wave = std::clamp<std::size_t>(
-      (row_tiles * weight_tiles + kTargetWaves - 1) / kTargetWaves, 1, 8);
-  // Even groups: the fewest tiles per wave for the same number of groups.
-  const std::size_t groups = (row_tiles + per_wave - 1) / per_wave;
-  per_wave = (row_tiles + groups - 1) / groups;
-  switch (per_wave) {
-#define GUFO_NEMOTRON_ASR_WMMA(n)                                         \
-  case n:                                                                 \
-    Launch<n>(x, tiles, y, rows, in, out, accumulate, scale, stream);     \
-    return true;
-    GUFO_NEMOTRON_ASR_WMMA(1)
-    GUFO_NEMOTRON_ASR_WMMA(2)
-    GUFO_NEMOTRON_ASR_WMMA(3)
-    GUFO_NEMOTRON_ASR_WMMA(4)
-    GUFO_NEMOTRON_ASR_WMMA(5)
-    GUFO_NEMOTRON_ASR_WMMA(6)
-    GUFO_NEMOTRON_ASR_WMMA(7)
-    GUFO_NEMOTRON_ASR_WMMA(8)
-#undef GUFO_NEMOTRON_ASR_WMMA
-    default:
-      return false;
-  }
+                bool accumulate, float scale, hipStream_t stream,
+                const float* bias, bool relu) {
+  return Dispatch<false>(x, tiles, y, rows, in, out, accumulate, scale, bias,
+                         relu, stream);
+}
+
+bool WmmaLinearHalf(const std::uint16_t* x, const std::uint16_t* tiles,
+                    std::uint16_t* y, std::size_t rows, std::size_t in,
+                    std::size_t out, const float* bias, bool relu,
+                    hipStream_t stream) {
+  return Dispatch<true>(x, tiles, y, rows, in, out, false, 1.0F, bias, relu,
+                        stream);
 }
 
 }  // namespace gufo::models::nemotron_asr::kernels

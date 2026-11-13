@@ -25,6 +25,9 @@
 
 namespace gufo::models::nemotron_asr {
 
+static_assert(static_cast<std::size_t>(kernels::kMaxKeys) == kMaxAttendedFrames,
+              "IsSupported checks the attention kernel's limit");
+
 struct LayerWeights {
   const float* ff1_norm_w = nullptr;
   const float* ff1_norm_b = nullptr;
@@ -52,9 +55,10 @@ struct LayerWeights {
   const float* out_norm_b = nullptr;
 };
 
-// The conformer layers' matrices and the joint's head are float16 tiles for
-// the matrix cores, the prediction network's matrices float16 rows, all
-// summed in float32; everything else stays float32.
+// The matrices of the subsampling, the conformer layers, the projections and
+// the joint's head are float16 tiles for the matrix cores, the prediction
+// network's matrices float16 rows, all summed in float32; everything else
+// (convolution kernels, norms, biases, positional tables) stays float32.
 struct Weights {
   std::vector<DeviceBuffer<float>> storage;
   std::vector<DeviceBuffer<std::uint16_t>> half_storage;
@@ -62,16 +66,16 @@ struct Weights {
   const float* stem_b = nullptr;
   const float* stage_dw_w[2] = {};
   const float* stage_dw_b[2] = {};
-  const float* stage_pw_w[2] = {};
+  const std::uint16_t* stage_pw_w[2] = {};
   const float* stage_pw_b[2] = {};
-  const float* sub_linear_w = nullptr;  // columns as [frequency][channel]
+  const std::uint16_t* sub_linear_w = nullptr;  // columns [frequency][channel]
   const float* sub_linear_b = nullptr;
   std::vector<LayerWeights> layers;
-  const float* prompt_w1 = nullptr;    // [prompt_hidden][hidden + prompts]
-  const float* prompt_bias = nullptr;  // [prompts][prompt_hidden], folded
-  const float* prompt_w2 = nullptr;
+  const std::uint16_t* prompt_w1 = nullptr;  // [prompt_hidden][hidden]
+  const float* prompt_bias = nullptr;        // [prompts][prompt_hidden], folded
+  const std::uint16_t* prompt_w2 = nullptr;
   const float* prompt_b2 = nullptr;
-  const float* proj_w = nullptr;
+  const std::uint16_t* proj_w = nullptr;
   const float* proj_b = nullptr;
   const float* embedding = nullptr;
   std::vector<const std::uint16_t*>
@@ -253,8 +257,9 @@ void LoadWeights(const Config& config, const std::filesystem::path& root,
     w.stage_dw_w[s] =
         load.Upload(stage + "depthwise_conv.weight", {c, 1, 3, 3});
     w.stage_dw_b[s] = load.Upload(stage + "depthwise_conv.bias", {c});
-    w.stage_pw_w[s] =
-        load.Upload(stage + "pointwise_conv.weight", {c, c, 1, 1});
+    w.stage_pw_w[s] = load.UploadTiles(
+        Loader::Host(load.Get(stage + "pointwise_conv.weight", {c, c, 1, 1})),
+        c, c);
     w.stage_pw_b[s] = load.Upload(stage + "pointwise_conv.bias", {c});
   }
   {
@@ -268,7 +273,7 @@ void LoadWeights(const Config& config, const std::filesystem::path& root,
       for (std::size_t ch = 0; ch < c; ++ch)
         for (std::size_t q = 0; q < f; ++q)
           permuted[o * c * f + q * c + ch] = src[o * c * f + ch * f + q];
-    w.sub_linear_w = load.Upload(permuted.data(), permuted.size());
+    w.sub_linear_w = load.UploadTiles(permuted.data(), h, c * f);
     w.sub_linear_b = load.Upload(sub + "linear.bias", {h});
   }
 
@@ -355,8 +360,12 @@ void LoadWeights(const Config& config, const std::filesystem::path& root,
     const Tensor& w1 =
         load.Get("prompt_projector.linear_1.weight", {ph, h + prompts});
     const Tensor& b1 = load.Get("prompt_projector.linear_1.bias", {ph});
-    w.prompt_w1 = load.Upload(Loader::Host(w1), w1.Elements());
     // The one-hot prompt selects one column of linear_1: fold it into the bias.
+    std::vector<float> hidden(ph * h);
+    for (std::size_t r = 0; r < ph; ++r)
+      std::memcpy(hidden.data() + r * h, Loader::Host(w1) + r * (h + prompts),
+                  h * sizeof(float));
+    w.prompt_w1 = load.UploadTiles(hidden.data(), ph, h);
     std::vector<float> folded(prompts * ph);
     for (std::size_t q = 0; q < prompts; ++q)
       for (std::size_t r = 0; r < ph; ++r)
@@ -364,9 +373,9 @@ void LoadWeights(const Config& config, const std::filesystem::path& root,
             Loader::Host(b1)[r] + Loader::Host(w1)[r * (h + prompts) + h + q];
     w.prompt_bias = load.Upload(folded.data(), folded.size());
   }
-  w.prompt_w2 = load.Upload("prompt_projector.linear_2.weight", {h, ph});
+  w.prompt_w2 = load.UploadTiles("prompt_projector.linear_2.weight", h, ph);
   w.prompt_b2 = load.Upload("prompt_projector.linear_2.bias", {h});
-  w.proj_w = load.Upload("encoder_projector.weight", {d, h});
+  w.proj_w = load.UploadTiles("encoder_projector.weight", d, h);
   w.proj_b = load.Upload("encoder_projector.bias", {d});
 
   w.embedding = load.Upload("decoder.embedding.weight", {config.vocab, d});
@@ -395,13 +404,23 @@ void LoadWeights(const Config& config, const std::filesystem::path& root,
   file->ReleasePages();
 }
 
-/// y[rows][out] = scale * x[rows][in] W^T, plus y when `accumulate`, on the
-/// matrix cores.
+/// y[rows][out] = scale * x[rows][in] W^T, plus y when `accumulate`, plus
+/// bias, on the matrix cores.
 void Linear(const std::uint16_t* x, const std::uint16_t* tiles, float* y,
             std::size_t rows, std::size_t in, std::size_t out, bool accumulate,
-            hipStream_t stream, float scale = 1.0F) {
+            hipStream_t stream, float scale = 1.0F,
+            const float* bias = nullptr) {
   if (!kernels::WmmaLinear(x, tiles, y, rows, in, out, accumulate, scale,
-                           stream))
+                           stream, bias))
+    throw std::logic_error("unsupported matrix-core product shape");
+}
+
+/// y = x W^T + bias, ReLU when `relu`, as float16.
+void LinearHalf(const std::uint16_t* x, const std::uint16_t* tiles,
+                std::uint16_t* y, std::size_t rows, std::size_t in,
+                std::size_t out, const float* bias, bool relu,
+                hipStream_t stream) {
+  if (!kernels::WmmaLinearHalf(x, tiles, y, rows, in, out, bias, relu, stream))
     throw std::logic_error("unsupported matrix-core product shape");
 }
 
@@ -426,8 +445,6 @@ std::unique_ptr<Model> Model::Load(const std::string& root,
     model->max_lookahead_ =
         *std::max_element(model->config_.encoder.lookaheads.begin(),
                           model->config_.encoder.lookaheads.end());
-    if (model->config_.encoder.left_context() + model->max_lookahead_ + 1 > 256)
-      throw std::runtime_error("the attention window exceeds 256 frames");
     model->weights_ = std::make_unique<Weights>();
     LoadWeights(model->config_, root, model->max_lookahead_, *model->weights_);
     return model;
@@ -446,18 +463,17 @@ struct StreamDevice {
   // a buffer allocation fails in the constructor.
   struct Handles {
     hipStream_t stream = nullptr;
-    hipblasHandle_t blas = nullptr;
     ~Handles() {
-      if (blas != nullptr)
-        (void)hipblasDestroy(blas);
       if (stream != nullptr)
         (void)hipStreamDestroy(stream);
     }
   } handles;
   hipStream_t& stream = handles.stream;
-  hipblasHandle_t& blas = handles.blas;
   std::size_t frames = 0;
-  DeviceBuffer<float> mel, s1, s1_cache, s2_in, s2, s2_cache, s3_in, s3;
+  DeviceBuffer<float> mel;
+  // The subsampling's float16 activations: each stage's input with its two
+  // history rows, the cached input row, the depthwise output.
+  DeviceBuffer<std::uint16_t> s1, s1_cache, s2_in, s2, s2_cache, s3_in, s3;
   DeviceBuffer<float> x, wide, mid, projected;
   DeviceBuffer<std::uint16_t> norm_half, wide_half, attention_half;
   // [layers][left][hidden] and [layers][kernel - 1][hidden].
@@ -472,8 +488,6 @@ struct StreamDevice {
     const EncoderConfig& e = config.encoder;
     Check(hipStreamCreateWithFlags(&stream, hipStreamNonBlocking),
           "hipStreamCreate");
-    Check(hipblasCreate(&blas), "hipblasCreate");
-    Check(hipblasSetStream(blas, stream), "hipblasSetStream");
     const std::size_t h_size = e.hidden;
     const std::size_t ch = e.subsampling_channels;
     const std::size_t max_mel = frames * e.subsampling_factor;
@@ -489,13 +503,12 @@ struct StreamDevice {
     s3_in.Reserve(t3 * w.frequencies[3] * ch);
     s3.Reserve(t3 * w.frequencies[3] * ch);
     const std::size_t rows = std::max(frames, t3);
-    const std::size_t widest =
-        std::max({e.intermediate, 3 * h_size, config.prompt_hidden});
+    const std::size_t widest = std::max(e.intermediate, 3 * h_size);
     x.Reserve(rows * h_size);
     wide.Reserve(rows * widest);
     mid.Reserve(rows * h_size);
     norm_half.Reserve(rows * h_size);
-    wide_half.Reserve(rows * e.intermediate);
+    wide_half.Reserve(rows * std::max(e.intermediate, config.prompt_hidden));
     attention_half.Reserve(rows * h_size);
     projected.Reserve(rows * config.decoder_hidden);
     key_cache.Reserve(e.layers * e.left_context() * h_size);
@@ -775,15 +788,16 @@ void Stream::Encode(const float* mel, std::size_t frames, EncoderTrace* trace,
                           w.stem_b, static_cast<int>(ch),
                           d.s1.get() + 2 * f1 * ch, static_cast<int>(t1),
                           static_cast<int>(f1), s);
+  using Half = std::uint16_t;
 
   // Two depthwise-separable stages, each with its cached input row.
   struct Stage {
-    float* in;  // rows from offset 2 are this pass's input
-    float* cache;
+    Half* in;  // rows from offset 2 are this pass's input
+    Half* cache;
     std::size_t rows;  // this pass's input rows
     std::size_t freq;  // input frequencies
-    float* out_dw;
-    float* out;  // pointwise output (next stage input at offset)
+    Half* out_dw;
+    Half* out;  // pointwise output (next stage input at offset)
     std::size_t out_offset_rows;
     std::size_t out_freq;
   };
@@ -798,31 +812,29 @@ void Stream::Encode(const float* mel, std::size_t frames, EncoderTrace* trace,
       st.rows = rows_out;
     const std::size_t row = st.freq * ch;
     if (first)
-      Check(hipMemsetAsync(st.in, 0, 2 * row * sizeof(float), s),
+      Check(hipMemsetAsync(st.in, 0, 2 * row * sizeof(Half), s),
             "hipMemset stage pad");
     else
-      Check(hipMemcpyAsync(st.in + row, st.cache, row * sizeof(float),
+      Check(hipMemcpyAsync(st.in + row, st.cache, row * sizeof(Half),
                            hipMemcpyDeviceToDevice, s),
             "stage cache in");
     if (tail != 0)
-      Check(hipMemsetAsync(st.in + (2 + st.rows) * row, 0, row * sizeof(float),
-                           s),
-            "hipMemset stage tail");
-    const float* input = st.in + (2 - pre) * row;
+      Check(
+          hipMemsetAsync(st.in + (2 + st.rows) * row, 0, row * sizeof(Half), s),
+          "hipMemset stage tail");
+    const Half* input = st.in + (2 - pre) * row;
     rows_out = Strided(pre + st.rows + tail);
     kernels::SubsampleDepthwise(
         input, static_cast<int>(st.freq), w.stage_dw_w[i], w.stage_dw_b[i],
         static_cast<int>(ch), st.out_dw, static_cast<int>(rows_out),
         static_cast<int>(st.out_freq), s);
     Check(hipMemcpyAsync(st.cache, st.in + (2 + st.rows - 1) * row,
-                         row * sizeof(float), hipMemcpyDeviceToDevice, s),
+                         row * sizeof(Half), hipMemcpyDeviceToDevice, s),
           "stage cache out");
-    float* out = st.out + st.out_offset_rows * st.out_freq * ch;
-    Linear(d.blas, st.out_dw, rows_out * st.out_freq, ch, ch, w.stage_pw_w[i],
-           ch, ch, out, ch);
-    kernels::AddBias(out, w.stage_pw_b[i],
-                     static_cast<int>(rows_out * st.out_freq),
-                     static_cast<int>(ch), true, s);
+    Half* out = st.out + st.out_offset_rows * st.out_freq * ch;
+    if (rows_out != 0)
+      LinearHalf(st.out_dw, w.stage_pw_w[i], out, rows_out * st.out_freq, ch,
+                 ch, w.stage_pw_b[i], true, s);
   }
   const std::size_t t = rows_out;
   if (!final && t != chunks * chunk_)
@@ -834,10 +846,8 @@ void Stream::Encode(const float* mel, std::size_t frames, EncoderTrace* trace,
     encoder_ms_ += Since(begin);
     return;
   }
-  Linear(d.blas, d.s3.get(), t, f3 * ch, f3 * ch, w.sub_linear_w, f3 * ch, h,
-         d.x.get(), h);
-  kernels::AddBias(d.x.get(), w.sub_linear_b, static_cast<int>(t),
-                   static_cast<int>(h), false, s);
+  Linear(d.s3.get(), w.sub_linear_w, d.x.get(), t, f3 * ch, h, false, s, 1.0F,
+         w.sub_linear_b);
   if (trace != nullptr) {
     trace->subsampled.resize(t * h);
     Check(hipMemcpyAsync(trace->subsampled.data(), d.x.get(),
@@ -923,17 +933,13 @@ void Stream::Encode(const float* mel, std::size_t frames, EncoderTrace* trace,
   // Language prompt and projection to the joint's width.
   const std::size_t ph = config_.prompt_hidden;
   const std::size_t width = config_.decoder_hidden;
-  Linear(d.blas, d.x.get(), t, h, h, w.prompt_w1, h + config_.prompts, ph,
-         d.wide.get(), ph);
-  kernels::AddBias(d.wide.get(), w.prompt_bias + prompt_ * ph,
-                   static_cast<int>(t), static_cast<int>(ph), true, s);
-  Linear(d.blas, d.wide.get(), t, ph, ph, w.prompt_w2, ph, h, d.mid.get(), h);
-  kernels::AddBias(d.mid.get(), w.prompt_b2, static_cast<int>(t),
-                   static_cast<int>(h), false, s);
-  Linear(d.blas, d.mid.get(), t, h, h, w.proj_w, h, width, d.projected.get(),
-         width);
-  kernels::AddBias(d.projected.get(), w.proj_b, static_cast<int>(t),
-                   static_cast<int>(width), false, s);
+  kernels::ToHalf(d.x.get(), norm, static_cast<std::int64_t>(t * h), s);
+  LinearHalf(norm, w.prompt_w1, d.wide_half.get(), t, h, ph,
+             w.prompt_bias + prompt_ * ph, true, s);
+  LinearHalf(d.wide_half.get(), w.prompt_w2, norm, t, ph, h, w.prompt_b2, false,
+             s);
+  Linear(norm, w.proj_w, d.projected.get(), t, h, width, false, s, 1.0F,
+         w.proj_b);
   if (trace != nullptr) {
     trace->projected.resize(t * width);
     Check(hipMemcpyAsync(trace->projected.data(), d.projected.get(),
@@ -1043,9 +1049,7 @@ std::vector<float> Stream::JointLogits(std::size_t frame) const {
                       d.joint_input.get(), 1, static_cast<int>(width),
                       d.stream);
   Linear(d.joint_input.get(), w.head_w, d.logits.get(), 1, width, config_.vocab,
-         false, d.stream);
-  kernels::AddBias(d.logits.get(), w.head_b, 1, static_cast<int>(config_.vocab),
-                   false, d.stream);
+         false, d.stream, 1.0F, w.head_b);
   std::vector<float> out(config_.vocab);
   Check(hipMemcpyAsync(out.data(), d.logits.get(), out.size() * sizeof(float),
                        hipMemcpyDeviceToHost, d.stream),

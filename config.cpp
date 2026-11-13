@@ -232,15 +232,20 @@ bool IsSupported(const Config& config, std::string* error) {
   if (e.subsampling_kernel != 3 || e.subsampling_stride != 2 ||
       e.subsampling_factor != 8)
     return fail("subsampling must be three stride-2 convolutions of size 3");
-  if (e.subsampling_channels == 0 || e.subsampling_channels > 1024)
-    return fail("the subsampling must have 1 to 1024 channels");
+  if (e.subsampling_channels == 0 || e.subsampling_channels % 32 != 0 ||
+      e.subsampling_channels > 1024)
+    return fail("the subsampling channels must be a multiple of 32 up to 1024");
   if (e.conv_kernel % 2 != 1 || e.conv_kernel > 31)
     return fail("the convolution kernel must be odd and at most 31");
   if (e.sliding_window < 2)
     return fail("the attention window is too small");
-  for (const std::size_t lookahead : e.lookaheads)
+  for (const std::size_t lookahead : e.lookaheads) {
     if (e.left_context() % (lookahead + 1) != 0)
       return fail("the left context must hold whole chunks");
+    if (e.left_context() + lookahead + 1 > kMaxAttendedFrames)
+      return fail("a query may attend to at most " +
+                  std::to_string(kMaxAttendedFrames) + " frames");
+  }
   if (std::find(e.lookaheads.begin(), e.lookaheads.end(),
                 e.default_lookahead) == e.lookaheads.end())
     return fail("the default lookahead is not a supported one");
@@ -254,6 +259,8 @@ bool IsSupported(const Config& config, std::string* error) {
     return fail("the blank token is outside the joint's outputs");
   if (config.vocab % 16 != 0)
     return fail("the joint's outputs must be a multiple of 16");
+  if (config.prompt_hidden == 0 || config.prompt_hidden % 32 != 0)
+    return fail("the prompt projector's width must be a multiple of 32");
   if (config.default_prompt >= config.prompts)
     return fail("the default prompt is out of range");
   for (const auto& [key, index] : config.prompt_dictionary)

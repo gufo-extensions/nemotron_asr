@@ -10,13 +10,15 @@
 
 #include <cmath>
 #include <cstdint>
+#include <stdexcept>
+
+#include "wmma_fragment.hpp"
 
 namespace gufo::models::nemotron_asr::kernels {
 namespace {
 
 constexpr int kGroup = 32;  // lanes that reduce together (wave32 or half a wave64)
 constexpr int kHeadDim = 128;
-constexpr int kMaxKeys = 256;
 
 __device__ float GroupSum(float value) {
   for (int offset = kGroup / 2; offset > 0; offset /= 2)
@@ -74,7 +76,7 @@ constexpr int kStemColumns = 2 * kStemFrequencies + 1;
 
 __global__ void SubsampleInputKernel(const float* mel, int bins,
                                      const float* weight, const float* bias,
-                                     int channels, float* out, int out_freq) {
+                                     int channels, __half* out, int out_freq) {
   __shared__ float rows[3][kStemColumns];
   const int t = blockIdx.x;
   const int first = blockIdx.y * kStemFrequencies;
@@ -112,47 +114,41 @@ __global__ void SubsampleInputKernel(const float* mel, int bins,
         sum = fmaf(w[dt * 3 + df], rows[dt][2 * j + df], sum);
       }
     out[(static_cast<std::int64_t>(t) * out_freq + f) * channels + c] =
-        fmaxf(sum, 0.0F);
+        SaturatedHalf(fmaxf(sum, 0.0F));
   }
 }
 
-__global__ void SubsampleDepthwiseKernel(const float* in, int in_freq,
+// One thread per output row, frequency and pair of channels.
+__global__ void SubsampleDepthwiseKernel(const __half2* in, int in_freq,
                                          const float* weight,
-                                         const float* bias, int channels,
-                                         float* out, int out_rows,
+                                         const float* bias, int pairs,
+                                         __half2* out, int out_rows,
                                          int out_freq) {
   const std::int64_t index =
       static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   const std::int64_t total =
-      static_cast<std::int64_t>(out_rows) * out_freq * channels;
+      static_cast<std::int64_t>(out_rows) * out_freq * pairs;
   if (index >= total)
     return;
-  const int c = static_cast<int>(index % channels);
-  const int f = static_cast<int>((index / channels) % out_freq);
-  const int t = static_cast<int>(index / (static_cast<std::int64_t>(channels) *
-                                          out_freq));
-  float sum = bias[c];
+  const int pair = static_cast<int>(index % pairs);
+  const int f = static_cast<int>((index / pairs) % out_freq);
+  const int t =
+      static_cast<int>(index / (static_cast<std::int64_t>(pairs) * out_freq));
+  const int c = 2 * pair;
+  float sum0 = bias[c];
+  float sum1 = bias[c + 1];
   for (int dt = 0; dt < 3; ++dt)
     for (int df = 0; df < 3; ++df) {
       const int in_f = 2 * f + df - 2;
       if (in_f < 0 || in_f >= in_freq)
         continue;
-      sum += weight[c * 9 + dt * 3 + df] *
-             in[(static_cast<std::int64_t>(2 * t + dt) * in_freq + in_f) *
-                    channels +
-                c];
+      const float2 value = __half22float2(
+          in[(static_cast<std::int64_t>(2 * t + dt) * in_freq + in_f) * pairs +
+             pair]);
+      sum0 += weight[c * 9 + dt * 3 + df] * value.x;
+      sum1 += weight[(c + 1) * 9 + dt * 3 + df] * value.y;
     }
-  out[index] = sum;
-}
-
-__global__ void AddBiasKernel(float* x, const float* bias, int rows, int cols,
-                              bool relu) {
-  const std::int64_t index =
-      static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-  if (index >= static_cast<std::int64_t>(rows) * cols)
-    return;
-  const float value = x[index] + bias[index % cols];
-  x[index] = relu ? fmaxf(value, 0.0F) : value;
+  out[index] = __halves2half2(SaturatedHalf(sum0), SaturatedHalf(sum1));
 }
 
 // One block of 256 threads per row.
@@ -215,93 +211,250 @@ __global__ void ToHalfKernel(const float* x, __half* y, std::int64_t n) {
     y[index] = __float2half(x[index]);
 }
 
-// One block of 128 threads (one per head dimension) per (query, head).
-template<typename Out>
-__global__ void RelPosAttentionKernel(const float* q, const float* cache_keys,
-                                      const float* cache_values,
-                                      const float* pos, const float* bias_u,
-                                      const float* bias_v, Out* out,
-                                      AttentionShape shape) {
-  __shared__ float scores[kMaxKeys];
-  __shared__ float reduce[2];
-  const int t = blockIdx.x;
-  const int h = blockIdx.y;
-  const int d = threadIdx.x;
-  const int width = shape.heads * kHeadDim;
-  const int column = h * kHeadDim + d;
+// Matrix-core attention: one block of four waves per (group of chunks,
+// head, tile of 16 of the group's queries). A group is as many whole chunks
+// as fit in 16 queries, or one chunk in tiles of 16; a block scores its
+// queries against the union of their keys, and each query's softmax keeps
+// its own chunk's window. The content terms (q + u) . k, the position terms
+// (q + v) . pos[distance] and the probabilities times the values are
+// products of float16 tiles summed in float32 (wmma_fragment.hpp: A holds
+// queries or probabilities, B keys, distances or value dimensions); the
+// scores and the softmax are float32. Rows and columns past the queries,
+// keys or distances read clamped (finite) rows and are never used: the
+// probabilities outside a query's window are zero.
+constexpr int kAttentionWaves = 4;
+constexpr int kAttentionThreads = kAttentionWaves * 32;
+static_assert(kAttentionThreads == kHeadDim, "a thread per head dimension");
+constexpr int kQueryStride = kHeadDim + 8;  // halves per staged query row
 
-  const std::int64_t absolute = shape.first_query + t;
-  const std::int64_t chunk = absolute / shape.chunk;
+__host__ __device__ constexpr int Round16(int n) {
+  return (n + 15) / 16 * 16;
+}
+
+__host__ __device__ constexpr int GroupChunks(int chunk) {
+  return chunk >= 16 ? 1 : 16 / chunk;
+}
+
+struct AttentionLayout {
+  int keys;       // score columns: keys of a group, padded to 16
+  int distances;  // term columns: 16 queries + keys - 1, padded to 16
+  // Byte offsets in LDS after the staged queries ([2][16][kQueryStride]).
+  [[nodiscard]] __host__ __device__ int Scores() const {
+    return 2 * 16 * kQueryStride * 2;
+  }
+  [[nodiscard]] __host__ __device__ int Terms() const {
+    return Scores() + 16 * keys * 4;
+  }
+  [[nodiscard]] __host__ __device__ int Probabilities() const {
+    return Terms() + 16 * distances * 4;
+  }
+  [[nodiscard]] __host__ __device__ int Inverse() const {
+    return Probabilities() + 16 * (keys + 8) * 2;
+  }
+  [[nodiscard]] __host__ __device__ int Bytes() const {
+    return Inverse() + 16 * 4;
+  }
+};
+
+__global__ __launch_bounds__(kAttentionThreads) void RelPosAttentionKernel(
+    const float* qkv, const float* cache_keys, const float* cache_values,
+    const float* pos, const float* bias_u, const float* bias_v, __half* out,
+    AttentionShape shape, AttentionLayout layout) {
+  extern __shared__ __align__(16) unsigned char shared[];
+  auto* query_u = reinterpret_cast<_Float16*>(shared);
+  auto* query_v = query_u + 16 * kQueryStride;
+  auto* scores = reinterpret_cast<float*>(shared + layout.Scores());
+  auto* terms = reinterpret_cast<float*>(shared + layout.Terms());
+  auto* probabilities =
+      reinterpret_cast<_Float16*>(shared + layout.Probabilities());
+  auto* inverse = reinterpret_cast<float*>(shared + layout.Inverse());
+  const int h = blockIdx.y;
+  const int tid = threadIdx.x;
+  const int lane = tid % 32;
+  const int row = lane % 16;
+  // Wave-uniform: scalar, so its guards do not split the wave.
+  const int wave = __builtin_amdgcn_readfirstlane(tid / 32);
+  const int width = shape.heads * kHeadDim;
+
+  // The group's frames in this pass end at `end`: its keys are begin..end -
+  // 1, this block's queries a0..a1 - 1 (absolute frames).
+  const std::int64_t pass_end = shape.first_query + shape.queries;
+  const int group_chunks = GroupChunks(shape.chunk);
+  const std::int64_t chunk =
+      shape.first_query / shape.chunk +
+      static_cast<std::int64_t>(blockIdx.x) * group_chunks;
+  std::int64_t end = (chunk + group_chunks) * shape.chunk;
+  if (end > pass_end)
+    end = pass_end;
+  std::int64_t start = chunk * shape.chunk;
+  if (start < shape.first_query)
+    start = shape.first_query;
+  const std::int64_t a0 = start + 16 * static_cast<std::int64_t>(blockIdx.z);
+  if (a0 >= end)
+    return;  // the chunk's last tile is shorter in this pass
+  const std::int64_t a1 = a0 + 16 < end ? a0 + 16 : end;
   std::int64_t begin = chunk * shape.chunk - shape.left;
-  std::int64_t end = (chunk + 1) * shape.chunk;
   if (begin < shape.first_key)
     begin = shape.first_key;
-  if (end > shape.first_query + shape.queries)
-    end = shape.first_query + shape.queries;
+  const int queries = static_cast<int>(a1 - a0);
   const int count = static_cast<int>(end - begin);
-  // Key `key` is cache row key - first_key before the pass, else the pass's
-  // qkv row key - first_query (keys at column width, values at 2 * width).
-  const auto key_row = [&](std::int64_t key) {
-    return key < shape.first_query
-               ? cache_keys + (key - shape.first_key) * width
-               : q + (key - shape.first_query) * shape.q_stride + width;
-  };
-  const auto value_row = [&](std::int64_t key) {
-    return key < shape.first_query
-               ? cache_values + (key - shape.first_key) * width
-               : q + (key - shape.first_query) * shape.q_stride + 2 * width;
-  };
+  const int distances = queries + count - 1;
+  // Distance of term column r: a0 - (end - 1) + r; query t and key j use
+  // column t - j + count - 1.
+  const std::int64_t nearest = a0 - (end - 1);
+  const float* q_rows = qkv + (a0 - shape.first_query) * shape.q_stride;
 
-  // Each group of 32 lanes scores keys in turn; lane l holds dimensions
-  // l, l + 32, l + 64 and l + 96 of its head.
-  const int lane = d % kGroup;
-  const int group = d / kGroup;
-  const int groups = kHeadDim / kGroup;
-  float qu4[4], qv4[4];
-  for (int i = 0; i < 4; ++i) {
-    const int dim = h * kHeadDim + lane + i * kGroup;
-    const float value =
-        q[static_cast<std::int64_t>(t) * shape.q_stride + dim];
-    qu4[i] = value + bias_u[dim];
-    qv4[i] = value + bias_v[dim];
-  }
-  for (int j = group; j < count; j += groups) {
-    const std::int64_t key = begin + j;
-    const float* k = key_row(key) + h * kHeadDim;
-    const float* p = pos +
-                     static_cast<std::int64_t>(shape.pos_zero +
-                                               (absolute - key)) *
-                         width +
-                     h * kHeadDim;
-    float partial = 0.0F;
-    for (int i = 0; i < 4; ++i)
-      partial += qu4[i] * k[lane + i * kGroup] + qv4[i] * p[lane + i * kGroup];
-    partial = GroupSum(partial);
-    if (lane == 0)
-      scores[j] = partial * shape.scale;
+  // Loads are issued in batches with clamped indices and selected results:
+  // branches around them would make each wait for the one before.
+  {
+    const int column = h * kHeadDim + tid;
+    const float u = bias_u[column];
+    const float v = bias_v[column];
+    float values[16];
+#pragma unroll
+    for (int t = 0; t < 16; ++t)
+      values[t] =
+          q_rows[static_cast<std::int64_t>(min(t, queries - 1)) *
+                     shape.q_stride +
+                 column];
+#pragma unroll
+    for (int t = 0; t < 16; ++t) {
+      const bool valid = t < queries;
+      query_u[t * kQueryStride + tid] =
+          valid ? static_cast<_Float16>(values[t] + u) : _Float16(0);
+      query_v[t * kQueryStride + tid] =
+          valid ? static_cast<_Float16>(values[t] + v) : _Float16(0);
+    }
   }
   __syncthreads();
-  if (group == 0) {
+
+  // Scores: tiles of 16 keys, then of 16 distances, in turn over the waves.
+  const int key_tiles = (count + 15) / 16;
+  const int distance_tiles = (distances + 15) / 16;
+  for (int tile = wave; tile < key_tiles + distance_tiles;
+       tile += kAttentionWaves) {
+    const bool is_key = tile < key_tiles;
+    const int first = is_key ? tile * 16 : (tile - key_tiles) * 16;
+    const int items = is_key ? count : distances;
+    const int item = first + row;
+    const int clamped = min(item, items - 1);
+    const std::int64_t key = begin + clamped;
+    const float* source =
+        is_key ? (key < shape.first_query
+                      ? cache_keys + (key - shape.first_key) * width
+                      : qkv + (key - shape.first_query) * shape.q_stride +
+                            width)
+               : pos + (shape.pos_zero + nearest + clamped) * width;
+    const auto* source4 =
+        reinterpret_cast<const float4*>(source + h * kHeadDim);
+    const _Float16* a_row = (is_key ? query_u : query_v) + row * kQueryStride;
+    Accumulator acc = {};
+#pragma unroll
+    for (int part = 0; part < 2; ++part) {
+      float4 raw[16];  // 64 dimensions: four steps of 16
+#pragma unroll
+      for (int i = 0; i < 16; ++i)
+        raw[i] = source4[part * 16 + i];
+#pragma unroll
+      for (int step = 0; step < 4; ++step) {
+        Fragment b;
+#pragma unroll
+        for (int i = 0; i < 4; ++i) {
+          const float4 r = raw[step * 4 + i];
+          b[4 * i] = static_cast<_Float16>(r.x);
+          b[4 * i + 1] = static_cast<_Float16>(r.y);
+          b[4 * i + 2] = static_cast<_Float16>(r.z);
+          b[4 * i + 3] = static_cast<_Float16>(r.w);
+        }
+        acc = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(
+            LoadFragment(a_row + (part * 4 + step) * 16), b, acc);
+      }
+    }
+    float* target = is_key ? scores : terms;
+    const int stride = is_key ? layout.keys : layout.distances;
+#pragma unroll
+    for (int i = 0; i < 8; ++i)
+      target[(2 * i + lane / 16) * stride + first + row] = acc[i];
+  }
+  __syncthreads();
+
+  // Softmax per query row in float32 over its chunk's window; probabilities
+  // as float16, zero outside the window and in the rows past the queries.
+  for (int t = wave; t < 16; t += kAttentionWaves) {
+    _Float16* p = probabilities + t * (layout.keys + 8);
+    if (t >= queries) {
+      for (int j = lane; j < layout.keys; j += kGroup)
+        p[j] = _Float16(0);
+      continue;
+    }
+    // The window of the query's chunk, in key columns.
+    const std::int64_t own = (a0 + t) / shape.chunk;
+    std::int64_t low = own * shape.chunk - shape.left;
+    if (low < shape.first_key)
+      low = shape.first_key;
+    std::int64_t high = (own + 1) * shape.chunk;
+    if (high > pass_end)
+      high = pass_end;
+    const int lo = static_cast<int>(low - begin);
+    const int hi = static_cast<int>(high - begin);
+    const float* score = scores + t * layout.keys;
+    const float* term = terms + t * layout.distances + t + count - 1;
     float best = -INFINITY;
-    for (int j = lane; j < count; j += kGroup)
-      best = fmaxf(best, scores[j]);
+    for (int j = lo + lane; j < hi; j += kGroup)
+      best = fmaxf(best, (score[j] + term[-j]) * shape.scale);
     best = GroupMax(best);
     float sum = 0.0F;
-    for (int j = lane; j < count; j += kGroup) {
-      const float e = expf(scores[j] - best);
-      scores[j] = e;
+    for (int j = lane; j < layout.keys; j += kGroup) {
+      float e = 0.0F;
+      if (j >= lo && j < hi)
+        e = expf((score[j] + term[-j]) * shape.scale - best);
       sum += e;
+      p[j] = static_cast<_Float16>(e);
     }
     sum = GroupSum(sum);
     if (lane == 0)
-      reduce[0] = 1.0F / sum;
+      inverse[t] = 1.0F / sum;
   }
   __syncthreads();
-  const float inverse = reduce[0];
-  float acc = 0.0F;
-  for (int j = 0; j < count; ++j)
-    acc += scores[j] * value_row(begin + j)[column];
-  Store(out, static_cast<std::int64_t>(t) * width + column, acc * inverse);
+
+  // Probabilities times values: each wave two tiles of 16 dimensions.
+  const _Float16* a_row = probabilities + row * (layout.keys + 8);
+  Accumulator acc[2] = {};
+  for (int step = 0; step < key_tiles; ++step) {
+    float raw[2][16];
+#pragma unroll
+    for (int e = 0; e < 16; ++e) {
+      const std::int64_t key = begin + min(step * 16 + e, count - 1);
+      const float* values =
+          key < shape.first_query
+              ? cache_values + (key - shape.first_key) * width
+              : qkv + (key - shape.first_query) * shape.q_stride + 2 * width;
+#pragma unroll
+      for (int d = 0; d < 2; ++d)
+        raw[d][e] = values[h * kHeadDim + (wave + kAttentionWaves * d) * 16 +
+                           row];
+    }
+    const Fragment a = LoadFragment(a_row + step * 16);
+#pragma unroll
+    for (int d = 0; d < 2; ++d) {
+      Fragment b;
+#pragma unroll
+      for (int e = 0; e < 16; ++e)
+        b[e] = static_cast<_Float16>(raw[d][e]);
+      acc[d] = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(a, b, acc[d]);
+    }
+  }
+#pragma unroll
+  for (int d = 0; d < 2; ++d) {
+    const int dim = h * kHeadDim + (wave + kAttentionWaves * d) * 16 + row;
+#pragma unroll
+    for (int i = 0; i < 8; ++i) {
+      const int t = 2 * i + lane / 16;
+      if (t < queries)
+        out[(a0 - shape.first_query + t) * width + dim] =
+            __float2half(acc[d][i] * inverse[t]);
+    }
+  }
 }
 
 // The last `keep` rows of [cache (cached rows) | the pass's rows], written
@@ -460,35 +613,29 @@ int Blocks(std::int64_t n, int threads) {
 }  // namespace
 
 void SubsampleInput(const float* mel, int bins, const float* weight,
-                    const float* bias, int channels, float* out, int out_rows,
-                    int out_freq, hipStream_t stream) {
+                    const float* bias, int channels, std::uint16_t* out,
+                    int out_rows, int out_freq, hipStream_t stream) {
   if (out_rows == 0 || out_freq == 0)
     return;
   const dim3 grid(static_cast<unsigned>(out_rows),
                   static_cast<unsigned>((out_freq + kStemFrequencies - 1) /
                                         kStemFrequencies));
   SubsampleInputKernel<<<grid, channels, 0, stream>>>(
-      mel, bins, weight, bias, channels, out, out_freq);
+      mel, bins, weight, bias, channels, reinterpret_cast<__half*>(out),
+      out_freq);
 }
 
-void SubsampleDepthwise(const float* in, int in_freq, const float* weight,
-                        const float* bias, int channels, float* out,
-                        int out_rows, int out_freq, hipStream_t stream) {
-  const std::int64_t n =
-      static_cast<std::int64_t>(out_rows) * out_freq * channels;
+void SubsampleDepthwise(const std::uint16_t* in, int in_freq,
+                        const float* weight, const float* bias, int channels,
+                        std::uint16_t* out, int out_rows, int out_freq,
+                        hipStream_t stream) {
+  const int pairs = channels / 2;
+  const std::int64_t n = static_cast<std::int64_t>(out_rows) * out_freq * pairs;
   if (n == 0)
     return;
   SubsampleDepthwiseKernel<<<Blocks(n, 256), 256, 0, stream>>>(
-      in, in_freq, weight, bias, channels, out, out_rows, out_freq);
-}
-
-void AddBias(float* x, const float* bias, int rows, int cols, bool relu,
-             hipStream_t stream) {
-  const std::int64_t n = static_cast<std::int64_t>(rows) * cols;
-  if (n == 0)
-    return;
-  AddBiasKernel<<<Blocks(n, 256), 256, 0, stream>>>(x, bias, rows, cols,
-                                                     relu);
+      reinterpret_cast<const __half2*>(in), in_freq, weight, bias, pairs,
+      reinterpret_cast<__half2*>(out), out_rows, out_freq);
 }
 
 void LayerNorm(const float* x, const float* weight, const float* bias,
@@ -536,10 +683,30 @@ void RelPosAttentionHalf(const float* qkv, const float* cache_keys,
                          hipStream_t stream) {
   if (shape.queries == 0)
     return;
-  RelPosAttentionKernel<__half><<<dim3(shape.queries, shape.heads), kHeadDim,
-                                  0, stream>>>(
+  // Unreachable for supported configurations (IsSupported).
+  if (shape.left + shape.chunk > kMaxKeys)
+    throw std::invalid_argument("attention window beyond kMaxKeys frames");
+  const auto aligned = [](const void* p) {
+    return reinterpret_cast<std::uintptr_t>(p) % 16 == 0;
+  };
+  if (shape.q_stride % 4 != 0 || !aligned(qkv) || !aligned(cache_keys) ||
+      !aligned(cache_values) || !aligned(pos))
+    throw std::invalid_argument("attention rows must be 16-byte aligned");
+  const std::int64_t first = shape.first_query / shape.chunk;
+  const std::int64_t last =
+      (shape.first_query + shape.queries - 1) / shape.chunk;
+  const int group = GroupChunks(shape.chunk) * shape.chunk;
+  AttentionLayout layout{};
+  layout.keys = Round16(shape.left + group);
+  layout.distances = Round16(16 + shape.left + group - 1);
+  const dim3 grid(
+      static_cast<unsigned>((last - first) / GroupChunks(shape.chunk) + 1),
+      static_cast<unsigned>(shape.heads),
+      static_cast<unsigned>((group + 15) / 16));
+  RelPosAttentionKernel<<<grid, kAttentionThreads,
+                          static_cast<std::size_t>(layout.Bytes()), stream>>>(
       qkv, cache_keys, cache_values, pos, bias_u, bias_v,
-      reinterpret_cast<__half*>(out), shape);
+      reinterpret_cast<__half*>(out), shape, layout);
 }
 
 void UpdateKeyValueCache(float* keys, float* values, const float* qkv,

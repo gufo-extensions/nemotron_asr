@@ -5,11 +5,11 @@ A community [Gufo](https://github.com/gufo-org/gufo) extension for
 NVIDIA's multilingual streaming speech recognition model, on AMD Strix Halo
 (`gfx1151`).
 
-> **Status:** 0.1.0 builds against Gufo 0.34.0 (extension API 0.3).
+> **Status:** 0.1.1 builds against Gufo 0.34.0 (extension API 0.3).
 > Transcription runs through `gufo serve asr`, for uploads and live over
 > the realtime WebSocket, and matches the reference implementation's
 > offline transcription token for token on the test clips. A 10 s upload
-> takes 27 ms, five minutes 0.64 s, four to six times faster than
+> takes 25 ms, five minutes 0.55 s, four to seven times faster than
 > audio.cpp with its Q8_0 model. See
 > [quality](docs/models/nemotron-3.5-asr/QUALITY.md),
 > [benchmarks](docs/models/nemotron-3.5-asr/BENCHMARKS.md) and the known
@@ -34,10 +34,13 @@ per frame.
 
 The provider loads the Hugging Face directory: `config.json`,
 `processor_config.json`, `tokenizer.json` and `model.safetensors` (float32,
-2.6 GB). On the GPU the matrices are float16, multiplied on the matrix cores
-with float32 sums; activations, norms, caches and the LSTM state stay
-float32 (1.5 GB of GPU memory in all). The `.nemo` archive and the GGUF
-file in the same repository are not used.
+2.6 GB). On the GPU every matrix product takes float16 operands and sums in
+float32, on the matrix cores except for the prediction network's single
+rows; the subsampling keeps its activations and cached rows in float16.
+Norms, the softmax, the encoder's residual stream, the attention and
+convolution caches and the LSTM state stay float32 (1.4 GB of GPU memory in
+all). The `.nemo` archive and the GGUF file in the same repository are not
+used.
 
 The weights aren't part of this repository. NVIDIA publishes them under the
 OpenMDW-1.1 license.
@@ -108,8 +111,9 @@ The tests compare the features, the encoder, the prediction and joint
 networks and the token IDs of 16 offline transcriptions (two clips, two
 language settings, four lookaheads) with outputs that
 `tools/reference/golden.py` recorded from the transformers implementation
-in float32. The float16 matrices change activations by up to about 0.1 %
-of their range; every token matches. Tests labeled
+in float32. The float16 products move the encoder's output by less than
+0.1 % of its range and single projected values by up to 0.5 %; every token
+matches. Tests labeled
 `external-model` skip unless `GUFO_NEMOTRON_ASR_MODEL` names the model
 directory.
 

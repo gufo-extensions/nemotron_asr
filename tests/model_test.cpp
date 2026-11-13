@@ -1,4 +1,5 @@
-// The GPU model (float16 matrices, float32 sums and activations) against
+// The GPU model (float16 products with float32 sums, float16 subsampling
+// activations, float32 elsewhere) against
 // tools/reference/golden.py (float32 transformers):
 //   encoder        subsampling, encoder and projection outputs of the first
 //                  three chunks, the prediction network's start state and
@@ -59,11 +60,14 @@ void TestEncoder(const asr::Model& model) {
           &trace, false);
       at += frames;
       const std::string name = clip + "." + std::to_string(chunk);
+      // Matrices and the subsampling's activations are float16 (float32
+      // sums); single projected values move by up to 0.5 % of the range,
+      // the joint's logits much less.
       nemotron_asr_test::ExpectClose(
           name + " subsampled", trace.subsampled,
           nemotron_asr_test::Floats(
               *golden, clip + ".subsampled." + std::to_string(chunk)),
-          1e-4);
+          2e-3);
       nemotron_asr_test::ExpectClose(
           name + " encoder", trace.hidden,
           nemotron_asr_test::Floats(*golden,
@@ -73,7 +77,7 @@ void TestEncoder(const asr::Model& model) {
           name + " projected", trace.projected,
           nemotron_asr_test::Floats(
               *golden, clip + ".projected." + std::to_string(chunk)),
-          2e-3);
+          1e-2);
       if (chunk == 0)
         nemotron_asr_test::ExpectClose(
             clip + " joint logits", stream.JointLogits(0),

@@ -2,7 +2,8 @@
 
 This page records numerical checks against the reference implementation,
 word error rates on the benchmark recordings and Gufo's functional ASR
-suite. Measured November 13, 2026, with extension 0.1.0 on Gufo 0.34.0 (`2845939b`), on NVIDIA's Hugging Face files at `ea30d66d`.
+suite. Measured November 13, 2026, with extension 0.1.1 on Gufo 0.34.0
+(`2845939b`), on NVIDIA's Hugging Face files at `ea30d66d`.
 
 ## Against the reference implementation
 
@@ -16,11 +17,11 @@ spoken by VoxCPM2 voice design.
 | --- | --- | --- |
 | Tokenizer | Token IDs of every reference run to raw and clean transcripts | identical |
 | Log-mel features | Every frame of both clips, pushed in pieces of 1 to 997 samples | within 6e-4 (of 16.6) |
-| Subsampling | First three chunks of both clips at lookahead 13 | within 1.6e-3 (of 1,160) |
-| Encoder output | Same chunks | within 5.3e-4 (of 0.90) |
-| Encoder projection | Same chunks | within 2.1e-3 (of 1.65) |
+| Subsampling | First three chunks of both clips at lookahead 13 | within 1.3 (of 1,160) |
+| Encoder output | Same chunks | within 6.3e-4 (of 0.90) |
+| Encoder projection | Same chunks | within 6.2e-3 (of 1.65) |
 | Prediction network | Start state | within 5.5e-4 (of 4.4) |
-| Joint | Logits of the first frame | within 0.035 (of 104) |
+| Joint | Logits of the first frame | within 0.019 (of 104) |
 | Transcription | Token IDs of 16 offline transcriptions: both clips, the clip's language and automatic detection, lookaheads 0, 3, 6 and 13; audio pushed in random pieces | 16/16 identical, same chunk and frame counts |
 
 The reference's offline transcription (the whole clip at once) is what the
@@ -30,12 +31,19 @@ zero padding after the pre-emphasis), and the last chunk holds only the
 frames that exist. Ten of the 16 transcripts end with a period, among them
 both clips at lookahead 13.
 
-The matrices of the encoder, the prediction network and the joint are
-float16, multiplied with float32 sums; activations, norms, attention, caches
-and the LSTM state are float32. That explains the deviations from the
-encoder on, up to 1.5e-3 of a tensor's range; with float32 matrices they
-were below 5e-6. On a 320.8 s recording of all three clips the float16
-build returned the same 1,741 tokens as the float32 one.
+Every matrix product takes float16 operands with float32 sums: the
+subsampling's, the encoder layers', the attention's scores and values, the
+projections, the prediction network and the joint. The subsampling also
+keeps its activations and cached rows in float16 (saturated at 65504);
+norms, the softmax, the encoder's residual stream, the attention and
+convolution caches and the LSTM state are float32. That explains
+the deviations: about 1e-3 of the range after the subsampling, 7e-4 at the
+encoder's output, up to 4.5e-3 for single projected values (about 1e-4 on
+average) and 2e-4 for the joint's logits; in float32 they were below 5e-6.
+On a 320.8 s recording of all three clips, float16 matrices in the encoder
+layers and the transducer returned the same tokens as float32 ones, and
+moving the subsampling, projections and attention to float16 (0.1.1) left
+the text unchanged: 0.1.0 and 0.1.1 both return it in 1,744 tokens.
 
 ## Word error rates
 

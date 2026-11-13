@@ -65,6 +65,26 @@ void TestConfig() {
   Expect(asr::ChunkFrames(*config, 13) == 112, "chunk frames");
   Expect(asr::FirstChunkFrames(*config, 0) == 1, "first chunk, lookahead 0");
   Expect(!asr::ParseConfig("{}", kProcessor).has_value(), "empty config fails");
+
+  // The kernels' limits.
+  const auto refuses = [&](asr::Config changed, const std::string& reason) {
+    std::string failure;
+    return !asr::IsSupported(changed, &failure) &&
+           failure.find(reason) != std::string::npos;
+  };
+  asr::Config changed = *config;
+  changed.encoder.subsampling_channels = 48;
+  Expect(refuses(changed, "multiple of 32"), "subsampling channels % 32");
+  changed = *config;
+  changed.prompt_hidden = 1000;
+  Expect(refuses(changed, "prompt projector"), "prompt projector width % 32");
+  changed = *config;
+  changed.encoder.sliding_window = 253;  // left 252: whole chunks of 1 to 14
+  Expect(refuses(changed, "attend to at most"), "attention window limit");
+  changed = *config;
+  changed.encoder.lookaheads.push_back(27);  // chunks of 28 frames
+  Expect(asr::IsSupported(changed, &error),
+         "chunks beyond 16 frames are supported: " + error);
   Expect(!asr::ParseConfig(kConfig, "{", &error).has_value(), "bad JSON fails");
 
   const auto prompt = [&](const char* language) -> long {
