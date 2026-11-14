@@ -339,12 +339,19 @@ __global__ __launch_bounds__(kAttentionThreads) void RelPosAttentionKernel(
     const int item = first + row;
     const int clamped = min(item, items - 1);
     const std::int64_t key = begin + clamped;
+    // A group's distances reach past the table's by up to 16 - chunk frames
+    // on each side, for keys outside every query's window (terms never
+    // used): those read its first or last row.
+    std::int64_t distance_row = shape.pos_zero + nearest + clamped;
+    distance_row = distance_row < 0 ? 0 : distance_row;
+    distance_row =
+        distance_row < shape.pos_rows ? distance_row : shape.pos_rows - 1;
     const float* source =
         is_key ? (key < shape.first_query
                       ? cache_keys + (key - shape.first_key) * width
                       : qkv + (key - shape.first_query) * shape.q_stride +
                             width)
-               : pos + (shape.pos_zero + nearest + clamped) * width;
+               : pos + distance_row * width;
     const auto* source4 =
         reinterpret_cast<const float4*>(source + h * kHeadDim);
     const _Float16* a_row = (is_key ? query_u : query_v) + row * kQueryStride;
@@ -683,9 +690,14 @@ void RelPosAttentionHalf(const float* qkv, const float* cache_keys,
                          hipStream_t stream) {
   if (shape.queries == 0)
     return;
-  // Unreachable for supported configurations (IsSupported).
+  // Unreachable for supported configurations (IsSupported) and the model's
+  // table, which holds the distances of the widest lookahead's window.
   if (shape.left + shape.chunk > kMaxKeys)
     throw std::invalid_argument("attention window beyond kMaxKeys frames");
+  if (shape.pos_zero < shape.chunk - 1 ||
+      shape.pos_zero + shape.left + shape.chunk > shape.pos_rows)
+    throw std::invalid_argument(
+        "position table shorter than the attention window");
   const auto aligned = [](const void* p) {
     return reinterpret_cast<std::uintptr_t>(p) % 16 == 0;
   };

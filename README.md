@@ -5,7 +5,7 @@ A community [Gufo](https://github.com/gufo-org/gufo) extension for
 NVIDIA's multilingual streaming speech recognition model, on AMD Strix Halo
 (`gfx1151`).
 
-> **Status:** 0.1.1 builds against Gufo 0.34.0 (extension API 0.3).
+> **Status:** 0.1.2 builds against Gufo 0.34.0 (extension API 0.3).
 > Transcription runs through `gufo serve asr`, for uploads and live over
 > the realtime WebSocket, and matches the reference implementation's
 > offline transcription token for token on the test clips. A 10 s upload

@@ -51,7 +51,7 @@ struct AttentionShape {
   int chunk = 0;                 // frames per attention chunk
   int left = 0;                  // frames attended before a query's chunk
   int pos_zero = 0;              // row of `pos` for distance 0
-  int pos_rows = 0;
+  int pos_rows = 0;              // rows of `pos`
   float scale = 0.0F;
 };
 
@@ -65,8 +65,10 @@ inline constexpr int kMaxKeys = 256;
 /// earlier keys and values the caches' rows (frames first_key to
 /// first_query - 1). The products take float16 operands with float32 sums,
 /// the softmax is float32; the output is float16. left + chunk at most
-/// kMaxKeys; rows are read as float4: qkv, the caches and pos 16-byte
-/// aligned, q_stride a multiple of 4.
+/// kMaxKeys. `pos` holds at least the distances of a query's window,
+/// -(chunk - 1) to left + chunk - 1, at rows pos_zero + distance; no row
+/// outside it is read. Rows are read as float4: qkv, the caches and pos
+/// 16-byte aligned, q_stride a multiple of 4.
 void RelPosAttentionHalf(const float* qkv, const float* cache_keys,
                          const float* cache_values, const float* pos,
                          const float* bias_u, const float* bias_v,
