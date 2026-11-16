@@ -125,3 +125,7 @@ directory.
 The extension source is MIT licensed ([LICENSE](LICENSE)). Code adapted from
 other projects keeps their licenses; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+This is an independent community project, not affiliated with or endorsed
+by NVIDIA or AMD. Model, product and company names belong to their owners
+and only identify the models and hardware the extension supports.
