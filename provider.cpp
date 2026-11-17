@@ -14,5 +14,6 @@ void nemotron_asr_provider_register(gufo::ext::Registry& registry) {
       .probe = &asr::ProbeNemotronAsr,
       .resolve = &asr::ResolveNemotronAsrArtifacts,
       .create = &asr::CreateNemotronAsrRunner,
+      .create_with_options = &asr::CreateNemotronAsrRunnerWithOptions,
   });
 }

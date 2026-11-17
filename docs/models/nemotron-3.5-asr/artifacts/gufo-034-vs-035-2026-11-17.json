@@ -1,0 +1,507 @@
+{
+ "gufo-0.34.0-1": {
+  "server": "gufo",
+  "lookahead": 13,
+  "power_profile_before": "balanced",
+  "model": "Nemotron-3.5-ASR-Streaming-0.6B",
+  "clips": {
+   "english": {
+    "audio_seconds": 10.08,
+    "language": "en-US",
+    "request_seconds": 0.0234,
+    "runs": [
+     0.024672186002135277,
+     0.022630574996583164,
+     0.02340790900052525
+    ],
+    "rtf": 0.0023,
+    "audio_seconds_per_second": 430.6237,
+    "text": "The quick brown fox jumps over the lazy dog. Speech recognition turns spoken words into written text one sentence at a time.",
+    "repeatable": true,
+    "wer": 0.0,
+    "machine": {
+     "watts": {
+      "median": 35.635,
+      "max": 35.635
+     },
+     "gpu_c": {
+      "median": 76.0,
+      "max": 76.0
+     },
+     "cpu_c": {
+      "median": 77.625,
+      "max": 77.625
+     },
+     "sclk_mhz": {
+      "median": 1136.0,
+      "max": 1136.0
+     },
+     "gpu_busy": {
+      "median": 13.0,
+      "max": 13.0
+     }
+    }
+   },
+   "german": {
+    "audio_seconds": 6.08,
+    "language": "de-DE",
+    "request_seconds": 0.0206,
+    "runs": [
+     0.020153639998170547,
+     0.020644832999096252,
+     0.020593174995156005
+    ],
+    "rtf": 0.0034,
+    "audio_seconds_per_second": 295.2434,
+    "text": "Heute ist ein schöner Tag in Berlin. Wir prüfen die Spracherkennung mit zwei kurzen Sätzen auf Deutsch.",
+    "repeatable": true,
+    "wer": 0.0,
+    "machine": {}
+   }
+  },
+  "machine_before": {
+   "t": 1794939764.4221,
+   "watts": 12.408,
+   "gpu_c": 66.0,
+   "cpu_c": 72.625,
+   "sclk_mhz": 601.0,
+   "gpu_busy": 0.0
+  },
+  "ready_seconds": 1.2684,
+  "command": [
+   "gufo-034-asr-v012",
+   "serve",
+   "asr",
+   "--model",
+   "Nemotron-3.5-ASR-Streaming-0.6B",
+   "--host",
+   "127.0.0.1",
+   "--port",
+   "18097",
+   "--max-request-bytes",
+   "67108864"
+  ],
+  "first_request": {
+   "clip": "english",
+   "seconds": 0.0349,
+   "text": "The quick brown fox jumps over the lazy dog. Speech recognition turns spoken words into written text one sentence at a time."
+  },
+  "resident_bytes": 249282560,
+  "gpu_bytes": 1490702336,
+  "long": {
+   "audio_seconds": 308.72,
+   "request_seconds": 0.5657,
+   "rtf": 0.0018,
+   "wer": 0.1192,
+   "words": 663,
+   "machine": {
+    "watts": {
+     "median": 62.838,
+     "max": 62.838
+    },
+    "gpu_c": {
+     "median": 80.0,
+     "max": 80.0
+    },
+    "cpu_c": {
+     "median": 82.125,
+     "max": 82.125
+    },
+    "sclk_mhz": {
+     "median": 1587.0,
+     "max": 1587.0
+    },
+    "gpu_busy": {
+     "median": 39.0,
+     "max": 39.0
+    }
+   }
+  },
+  "machine": {
+   "watts": {
+    "median": 28.341,
+    "max": 62.838
+   },
+   "gpu_c": {
+    "median": 70.0,
+    "max": 80.0
+   },
+   "cpu_c": {
+    "median": 77.0,
+    "max": 82.125
+   },
+   "sclk_mhz": {
+    "median": 909.0,
+    "max": 1587.0
+   },
+   "gpu_busy": {
+    "median": 5.0,
+    "max": 39.0
+   }
+  },
+  "power_profile_after": "balanced"
+ },
+ "gufo-0.35.0-1": {
+  "server": "gufo",
+  "lookahead": 13,
+  "power_profile_before": "balanced",
+  "model": "Nemotron-3.5-ASR-Streaming-0.6B",
+  "clips": {
+   "english": {
+    "audio_seconds": 10.08,
+    "language": "en-US",
+    "request_seconds": 0.0244,
+    "runs": [
+     0.02437663500313647,
+     0.0248074310075026,
+     0.02385576300730463
+    ],
+    "rtf": 0.0024,
+    "audio_seconds_per_second": 413.5107,
+    "text": "The quick brown fox jumps over the lazy dog. Speech recognition turns spoken words into written text one sentence at a time.",
+    "repeatable": true,
+    "wer": 0.0,
+    "machine": {}
+   },
+   "german": {
+    "audio_seconds": 6.08,
+    "language": "de-DE",
+    "request_seconds": 0.0212,
+    "runs": [
+     0.020907714002532884,
+     0.02118712500669062,
+     0.021463274999405257
+    ],
+    "rtf": 0.0035,
+    "audio_seconds_per_second": 286.9667,
+    "text": "Heute ist ein schöner Tag in Berlin. Wir prüfen die Spracherkennung mit zwei kurzen Sätzen auf Deutsch.",
+    "repeatable": true,
+    "wer": 0.0,
+    "machine": {}
+   }
+  },
+  "machine_before": {
+   "t": 1794939766.7662,
+   "watts": 65.453,
+   "gpu_c": 68.0,
+   "cpu_c": 83.5,
+   "sclk_mhz": 1636.0,
+   "gpu_busy": 42.0
+  },
+  "ready_seconds": 1.217,
+  "command": [
+   "gufo-035-ext",
+   "serve",
+   "asr",
+   "--model",
+   "Nemotron-3.5-ASR-Streaming-0.6B",
+   "--host",
+   "127.0.0.1",
+   "--port",
+   "18097",
+   "--max-request-bytes",
+   "67108864"
+  ],
+  "first_request": {
+   "clip": "english",
+   "seconds": 0.0345,
+   "text": "The quick brown fox jumps over the lazy dog. Speech recognition turns spoken words into written text one sentence at a time."
+  },
+  "resident_bytes": 250843136,
+  "gpu_bytes": 1490706432,
+  "long": {
+   "audio_seconds": 308.72,
+   "request_seconds": 0.5691,
+   "rtf": 0.0018,
+   "wer": 0.1192,
+   "words": 663,
+   "machine": {
+    "watts": {
+     "median": 72.237,
+     "max": 72.237
+    },
+    "gpu_c": {
+     "median": 81.0,
+     "max": 81.0
+    },
+    "cpu_c": {
+     "median": 83.75,
+     "max": 83.75
+    },
+    "sclk_mhz": {
+     "median": 1740.0,
+     "max": 1740.0
+    },
+    "gpu_busy": {
+     "median": 46.0,
+     "max": 46.0
+    }
+   }
+  },
+  "machine": {
+   "watts": {
+    "median": 54.134,
+    "max": 72.237
+   },
+   "gpu_c": {
+    "median": 70.0,
+    "max": 81.0
+   },
+   "cpu_c": {
+    "median": 82.5,
+    "max": 83.75
+   },
+   "sclk_mhz": {
+    "median": 1423.0,
+    "max": 1740.0
+   },
+   "gpu_busy": {
+    "median": 25.0,
+    "max": 46.0
+   }
+  },
+  "power_profile_after": "balanced"
+ },
+ "gufo-0.35.0-2": {
+  "server": "gufo",
+  "lookahead": 13,
+  "power_profile_before": "balanced",
+  "model": "Nemotron-3.5-ASR-Streaming-0.6B",
+  "clips": {
+   "english": {
+    "audio_seconds": 10.08,
+    "language": "en-US",
+    "request_seconds": 0.0259,
+    "runs": [
+     0.02653500200540293,
+     0.025386919995071366,
+     0.025876154002617113
+    ],
+    "rtf": 0.0026,
+    "audio_seconds_per_second": 389.5478,
+    "text": "The quick brown fox jumps over the lazy dog. Speech recognition turns spoken words into written text one sentence at a time.",
+    "repeatable": true,
+    "wer": 0.0,
+    "machine": {}
+   },
+   "german": {
+    "audio_seconds": 6.08,
+    "language": "de-DE",
+    "request_seconds": 0.0215,
+    "runs": [
+     0.021503853000467643,
+     0.021627919006277807,
+     0.020188588998280466
+    ],
+    "rtf": 0.0035,
+    "audio_seconds_per_second": 282.74,
+    "text": "Heute ist ein schöner Tag in Berlin. Wir prüfen die Spracherkennung mit zwei kurzen Sätzen auf Deutsch.",
+    "repeatable": true,
+    "wer": 0.0,
+    "machine": {}
+   }
+  },
+  "machine_before": {
+   "t": 1794939769.076,
+   "watts": 71.225,
+   "gpu_c": 68.0,
+   "cpu_c": 84.5,
+   "sclk_mhz": 1742.0,
+   "gpu_busy": 46.0
+  },
+  "ready_seconds": 1.2168,
+  "command": [
+   "gufo-035-ext",
+   "serve",
+   "asr",
+   "--model",
+   "Nemotron-3.5-ASR-Streaming-0.6B",
+   "--host",
+   "127.0.0.1",
+   "--port",
+   "18097",
+   "--max-request-bytes",
+   "67108864"
+  ],
+  "first_request": {
+   "clip": "english",
+   "seconds": 0.0347,
+   "text": "The quick brown fox jumps over the lazy dog. Speech recognition turns spoken words into written text one sentence at a time."
+  },
+  "resident_bytes": 250875904,
+  "gpu_bytes": 1490710528,
+  "long": {
+   "audio_seconds": 308.72,
+   "request_seconds": 0.5757,
+   "rtf": 0.0019,
+   "wer": 0.1192,
+   "words": 663,
+   "machine": {
+    "watts": {
+     "median": 73.318,
+     "max": 73.318
+    },
+    "gpu_c": {
+     "median": 82.0,
+     "max": 82.0
+    },
+    "cpu_c": {
+     "median": 84.5,
+     "max": 84.5
+    },
+    "sclk_mhz": {
+     "median": 1772.0,
+     "max": 1772.0
+    },
+    "gpu_busy": {
+     "median": 47.0,
+     "max": 47.0
+    }
+   }
+  },
+  "machine": {
+   "watts": {
+    "median": 57.251,
+    "max": 73.318
+   },
+   "gpu_c": {
+    "median": 71.0,
+    "max": 82.0
+   },
+   "cpu_c": {
+    "median": 83.25,
+    "max": 84.5
+   },
+   "sclk_mhz": {
+    "median": 1445.0,
+    "max": 1772.0
+   },
+   "gpu_busy": {
+    "median": 28.0,
+    "max": 47.0
+   }
+  },
+  "power_profile_after": "balanced"
+ },
+ "gufo-0.34.0-2": {
+  "server": "gufo",
+  "lookahead": 13,
+  "power_profile_before": "balanced",
+  "model": "Nemotron-3.5-ASR-Streaming-0.6B",
+  "clips": {
+   "english": {
+    "audio_seconds": 10.08,
+    "language": "en-US",
+    "request_seconds": 0.0239,
+    "runs": [
+     0.023930160008603707,
+     0.02406850601255428,
+     0.023824014991987497
+    ],
+    "rtf": 0.0024,
+    "audio_seconds_per_second": 421.2258,
+    "text": "The quick brown fox jumps over the lazy dog. Speech recognition turns spoken words into written text one sentence at a time.",
+    "repeatable": true,
+    "wer": 0.0,
+    "machine": {}
+   },
+   "german": {
+    "audio_seconds": 6.08,
+    "language": "de-DE",
+    "request_seconds": 0.0206,
+    "runs": [
+     0.020946082993759774,
+     0.020578654992277734,
+     0.0196740259998478
+    ],
+    "rtf": 0.0034,
+    "audio_seconds_per_second": 295.4518,
+    "text": "Heute ist ein schöner Tag in Berlin. Wir prüfen die Spracherkennung mit zwei kurzen Sätzen auf Deutsch.",
+    "repeatable": true,
+    "wer": 0.0,
+    "machine": {}
+   }
+  },
+  "machine_before": {
+   "t": 1794939771.396,
+   "watts": 72.44,
+   "gpu_c": 69.0,
+   "cpu_c": 85.125,
+   "sclk_mhz": 1766.0,
+   "gpu_busy": 47.0
+  },
+  "ready_seconds": 1.2158,
+  "command": [
+   "gufo-034-asr-v012",
+   "serve",
+   "asr",
+   "--model",
+   "Nemotron-3.5-ASR-Streaming-0.6B",
+   "--host",
+   "127.0.0.1",
+   "--port",
+   "18097",
+   "--max-request-bytes",
+   "67108864"
+  ],
+  "first_request": {
+   "clip": "english",
+   "seconds": 0.033,
+   "text": "The quick brown fox jumps over the lazy dog. Speech recognition turns spoken words into written text one sentence at a time."
+  },
+  "resident_bytes": 249208832,
+  "gpu_bytes": 1490710528,
+  "long": {
+   "audio_seconds": 308.72,
+   "request_seconds": 0.5643,
+   "rtf": 0.0018,
+   "wer": 0.1192,
+   "words": 663,
+   "machine": {
+    "watts": {
+     "median": 73.71,
+     "max": 73.71
+    },
+    "gpu_c": {
+     "median": 79.0,
+     "max": 79.0
+    },
+    "cpu_c": {
+     "median": 84.875,
+     "max": 84.875
+    },
+    "sclk_mhz": {
+     "median": 1777.0,
+     "max": 1777.0
+    },
+    "gpu_busy": {
+     "median": 47.0,
+     "max": 47.0
+    }
+   }
+  },
+  "machine": {
+   "watts": {
+    "median": 58.266,
+    "max": 73.71
+   },
+   "gpu_c": {
+    "median": 71.0,
+    "max": 79.0
+   },
+   "cpu_c": {
+    "median": 83.5,
+    "max": 85.125
+   },
+   "sclk_mhz": {
+    "median": 1464.0,
+    "max": 1777.0
+   },
+   "gpu_busy": {
+    "median": 28.0,
+    "max": 47.0
+   }
+  },
+  "power_profile_after": "balanced"
+ }
+}

@@ -5,7 +5,8 @@ A community [Gufo](https://github.com/gufo-org/gufo) extension for
 NVIDIA's multilingual streaming speech recognition model, on AMD Strix Halo
 (`gfx1151`).
 
-> **Status:** 0.1.2 builds against Gufo 0.34.0 (extension API 0.3).
+> **Status:** 0.2.0 builds against Gufo 0.35.0 (extension API 0.3.4 or
+> later).
 > Transcription runs through `gufo serve asr`, for uploads and live over
 > the realtime WebSocket, and matches the reference implementation's
 > offline transcription token for token on the test clips. A 10 s upload
@@ -43,12 +44,16 @@ all). The `.nemo` archive and the GGUF file in the same repository are not
 used.
 
 The weights aren't part of this repository. NVIDIA publishes them under the
-OpenMDW-1.1 license.
+OpenMDW-1.1 license. `gufo model install nemotron-3.5-asr` downloads these
+four files at the revision the extension was tested with (`ea30d66d`) and
+checks their SHA-256 against `models.lock.json`; `--model nemotron-3.5-asr`
+then names the installed directory.
 
 ## Use
 
 ```sh
-MODEL=/models/nemotron-3.5-asr-streaming-0.6b   # the Hugging Face directory
+MODEL=/models/nemotron-3.5-asr-streaming-0.6b   # the Hugging Face directory,
+                                                # or nemotron-3.5-asr once installed
 gufo serve asr --model "$MODEL" --port 8080
 curl -s localhost:8080/v1/audio/transcriptions -F file=@talk.wav -F language=de
 ```
@@ -62,8 +67,12 @@ curl -s localhost:8080/v1/audio/transcriptions -F file=@talk.wav -F language=de
   request bodies up to 8 MiB by default, about 4.4 minutes of 16 kHz mono
   WAV; raise `--max-request-bytes` for longer recordings.
 - `stream=true` sends the text pass by pass (about 4.5 s of audio each).
-- Live transcription (`GET /v1/realtime?intent=transcription`) sends text
-  every 0.56 s (lookahead 6) while audio arrives.
+- Live transcription (`GET /v1/realtime?intent=transcription`, and
+  `gufo transcribe --live`) sends text every 0.56 s (lookahead 6) while
+  audio arrives. `--live-lookahead 0`, `3` or `13` (for `serve asr` and
+  `transcribe`) chooses every 0.08, 0.32 or 1.12 s instead; by NVIDIA's
+  model card a longer lookahead makes fewer word errors. Other values are
+  rejected before the model loads.
 - `prompt` is ignored: the model has no text context.
 - The end of an utterance is transcribed as the reference's offline
   transcription ends it: the last chunk holds only the frames that exist,
@@ -74,8 +83,8 @@ curl -s localhost:8080/v1/audio/transcriptions -F file=@talk.wav -F language=de
 - Gufo starts live transcription only when a session's language is unset
   or English; other languages are transcribed after the commit instead.
   Without a language the model detects it, live as well.
-- The lookahead of live sessions is fixed: Gufo passes no options to speech
-  recognition providers.
+- The lookahead of live sessions is set per server (`--live-lookahead`),
+  not per session.
 - Words have no timestamps.
 - Encoder passes (up to 18 s of audio for uploads, 4.5 s for live sessions
   and streamed uploads) take turns on the GPU in arrival order.
@@ -83,7 +92,8 @@ curl -s localhost:8080/v1/audio/transcriptions -F file=@talk.wav -F language=de
 
 ## Build with Gufo
 
-The extension needs extension API 0.3 (Gufo 0.34.0 or a later 0.3 release);
+The extension needs extension API 0.3.4 or later (Gufo 0.35.0 or a later
+0.3 release);
 `flake.nix` pins the revision it was built and tested with.
 
 ```sh

@@ -51,6 +51,15 @@ subsampling, projections and attention, took 0.027 s, 0.022 s, 0.025 s and
 0.640 s. Word error rates are on the [quality](QUALITY.md)
 page.
 
+Gufo 0.35.0 (`0260e116`) parses uploads with new multipart code. With the
+same model code on both (0.1.2's; 0.2.0 adds only the live lookahead
+option), release builds in
+the order 0.34.0, 0.35.0, 0.35.0, 0.34.0 under a clean `machine-lock perf`
+on November 17, the English clip took 0.025 s against 0.024 s, the German
+clip 0.021 s on both and the long recording 0.572 s against 0.565 s, with
+the same transcripts
+([raw results](artifacts/gufo-034-vs-035-2026-11-17.json)).
+
 ## Concurrent uploads
 
 The English clip, C requests at a time, three rounds:

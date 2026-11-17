@@ -3,7 +3,12 @@
 This page records numerical checks against the reference implementation,
 word error rates on the benchmark recordings and Gufo's functional ASR
 suite. Measured November 13, 2026, with extension 0.1.1 on Gufo 0.34.0
-(`2845939b`), on NVIDIA's Hugging Face files at `ea30d66d`.
+(`2845939b`), on NVIDIA's Hugging Face files at `ea30d66d`. On Gufo 0.35.0
+(`0260e116`) the 7 tests pass unchanged (November 17, on the model code
+0.2.0 keeps), and so does the functional ASR suite with 0.2.0 (November
+18). Live transcription of the English test clip at lookaheads 0, 3, 6 and
+13 (`--live-lookahead`) gives the upload's text; at 0 the final period is
+missing.
 
 ## Against the reference implementation
 

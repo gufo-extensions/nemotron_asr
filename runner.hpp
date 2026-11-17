@@ -13,6 +13,12 @@ namespace gufo::models::nemotron_asr {
     const std::string& model_root, std::size_t maximum_context_tokens,
     std::string* error);
 
+/// The same runner with the options it declares: `--live-lookahead` sets the
+/// lookahead of live sessions.
+[[nodiscard]] std::unique_ptr<ext::AsrRunner>
+CreateNemotronAsrRunnerWithOptions(const ext::AsrRunnerOptions& options,
+                                   std::string* error);
+
 }  // namespace gufo::models::nemotron_asr
 
 #endif  // GUFO_MODELS_NEMOTRON_ASR_RUNNER_HPP_
